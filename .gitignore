@@ -1,0 +1,41 @@
+# Node
+node_modules/
+.npmrc
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Env
+.env
+.env.*
+
+# OS/macOS
+.DS_Store
+
+# Build outputs
+/dist/
+/build/
+/.cache/
+/.turbo/
+/.vercel/
+
+# Testing/coverage
+/coverage/
+/.nyc_output/
+
+# Tools/IDE
+.vscode/
+.idea/
+.eslintcache
+
+# TypeScript (if added later)
+*.tsbuildinfo
+
+# Temp
+/tmp/
+/temp/
+
+# Artifacts
+screenshot*.png
+
