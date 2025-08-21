@@ -2,6 +2,7 @@ import blessed from 'blessed';
 import { loadConfig, setModel, setApiKey, getApiKey, getModel } from './config.js';
 import { openCmd, gotoCmd, clickCmd, typeCmd } from './commands.js';
 import { withPage, createChrome, cancelCurrentAction } from './chrome.js';
+import { runAgent } from './agent.js';
 
 export async function runTui() {
   // Do NOT auto-launch Chrome here; lazily start on first browser command.
@@ -118,11 +119,30 @@ export async function runTui() {
         addLog('  /click <selector>');
         addLog('  /type <selector> <text>');
         addLog('  /quit');
+        addLog('');
+        addLog('Free text (no /): run the AI agent with your request.');
+        addLog('Agent tools: goto(url), click(selector), type(selector,text), screenshot(path?), scroll(y), done(result)');
       } else if (cmd === '/quit') {
         screen.destroy();
         process.exit(0);
       } else {
-        addLog('Unknown command. Try /help');
+        // Free text: run AI agent with this as the goal
+        addLog(`Agent goal: ${cmd}`);
+        try {
+          await runAgent(cmd, {
+            debug: true,
+            headless: false,
+            promptForApiKey: false,
+            onLog: (m) => addLog(m),
+          });
+        } catch (e) {
+          const msg = e?.message || String(e);
+          if (msg.includes('API key')) {
+            addLog('OpenRouter API key missing. Use /key <apiKey> to set it.');
+          } else {
+            addLog(`Agent error: ${msg}`);
+          }
+        }
       }
     } catch (e) {
       addLog(`Error: ${e?.message || e}`);

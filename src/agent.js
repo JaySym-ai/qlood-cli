@@ -1,4 +1,4 @@
-import { ensurePage, getBrowser, createChrome } from './chrome.js';
+import { ensurePage, getBrowser, createChrome, screenshot as takeScreenshot } from './chrome.js';
 import { gotoCmd, clickCmd, typeCmd } from './commands.js';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -7,18 +7,21 @@ import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { getApiKey, getModel, setApiKey } from './config.js';
 
-export async function runAgent(goal, { model, headless = false, debug = false } = {}) {
+export async function runAgent(goal, { model, headless = false, debug = false, promptForApiKey = true, onLog } = {}) {
   let apiKey = getApiKey();
   if (!apiKey) {
-    const rl = readline.createInterface({ input, output });
-    const entered = await rl.question('Enter your OpenRouter API key: ');
-    rl.close();
-    if (!entered) {
-      console.error('An API key is required. Aborting.');
-      process.exit(1);
+    if (promptForApiKey) {
+      const rl = readline.createInterface({ input, output });
+      const entered = await rl.question('Enter your OpenRouter API key: ');
+      rl.close();
+      if (!entered) {
+        throw new Error('OpenRouter API key missing');
+      }
+      setApiKey(entered.trim());
+      apiKey = entered.trim();
+    } else {
+      throw new Error('OpenRouter API key missing');
     }
-    setApiKey(entered.trim());
-    apiKey = entered.trim();
   }
   const effectiveModel = model || getModel();
 
@@ -26,7 +29,9 @@ export async function runAgent(goal, { model, headless = false, debug = false } 
   const tools = [
     { name: 'goto', description: 'Navigate to a URL', params: ['url'] },
     { name: 'click', description: 'Click a CSS selector', params: ['selector'] },
-    { name: 'type', description: 'Type into selector', params: ['selector', 'text'] },
+    { name: 'type', description: 'Type text into a CSS selector', params: ['selector', 'text'] },
+    { name: 'screenshot', description: 'Save a full-page screenshot to path', params: ['path?'] },
+    { name: 'scroll', description: 'Scroll vertically by pixels (positive=down)', params: ['y'] },
     { name: 'done', description: 'Finish when goal achieved', params: ['result'] }
   ];
 
@@ -62,21 +67,24 @@ export async function runAgent(goal, { model, headless = false, debug = false } 
     const data = await resp.json();
     const content = data.choices?.[0]?.message?.content || '';
 
-    let plan;
-    try { plan = JSON.parse(content); } catch {
-      console.log('Model did not return JSON; stopping.');
-      break;
-    }
+  let plan;
+  try { plan = JSON.parse(content); } catch {
+    console.log('Model did not return JSON; stopping.');
+    break;
+  }
 
-    const { tool, args } = plan || {};
-    async function ensureAgentPage() {
-      try { await getBrowser(); } catch { await createChrome({ headless, debug }); }
-      if (!page) page = await ensurePage();
-    }
-    if (tool === 'goto') { await ensureAgentPage(); await gotoCmd(page, args.url, { silent: true }); }
-    else if (tool === 'click') { await ensureAgentPage(); await clickCmd(page, args.selector, { silent: true }); }
-    else if (tool === 'type') { await ensureAgentPage(); await typeCmd(page, args.selector, args.text, { silent: true }); }
-    else if (tool === 'done') { console.log('Done:', args.result); break; }
-    else { console.log('Unknown tool, stopping.'); break; }
+  const { tool, args } = plan || {};
+  async function ensureAgentPage() {
+    try { await getBrowser(); } catch { await createChrome({ headless, debug }); }
+    if (!page) page = await ensurePage();
+  }
+  if (onLog) onLog(`Tool: ${tool} ${args ? JSON.stringify(args) : ''}`);
+  if (tool === 'goto') { await ensureAgentPage(); await gotoCmd(page, args.url, { silent: true }); }
+  else if (tool === 'click') { await ensureAgentPage(); await clickCmd(page, args.selector, { silent: true }); }
+  else if (tool === 'type') { await ensureAgentPage(); await typeCmd(page, args.selector, args.text, { silent: true }); }
+  else if (tool === 'screenshot') { await ensureAgentPage(); const p = args.path || 'screenshot.png'; await takeScreenshot(page, p); if (onLog) onLog(`Saved screenshot: ${p}`); }
+  else if (tool === 'scroll') { await ensureAgentPage(); const y = Number(args.y || 0); await page.evaluate((dy) => window.scrollBy(0, dy), y); }
+  else if (tool === 'done') { if (onLog) onLog(`Done: ${args.result}`); else console.log('Done:', args.result); break; }
+  else { if (onLog) onLog('Unknown tool, stopping.'); else console.log('Unknown tool, stopping.'); break; }
   }
 }

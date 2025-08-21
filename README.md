@@ -56,9 +56,12 @@ Config commands
 - qlood config key <apiKey>          Persist OpenRouter API key (also usable via TUI /key)
 
 TUI (Text UI)
-- qlood                              Launches the TUI by default (no arguments)
-- qlood tui                          Explicitly launch the interactive interface
-- TUI commands: /model <id>, /key <apiKey>, /open <url>, /goto <url>, /click <selector>, /type <selector> <text>
+- `qlood`                            Launches the TUI by default (no arguments)
+- `qlood tui`                        Explicitly launch the interactive interface
+- Slash commands: `/model <id>`, `/key <apiKey>`, `/open <url>`, `/goto <url>`, `/click <selector>`, `/type <selector> <text>`, `/quit`
+- Free text: type natural language without `/` to invoke the AI agent which will use tools to act on the browser.
+- Agent tools: `goto(url)`, `click(selector)`, `type(selector,text)`, `screenshot(path?)`, `scroll(y)`, `done(result)`
+- Ctrl+C: first press cancels the current action (closes browser), second within 1.5s exits
 - Built with blessed for a richer interactive experience than raw CLI
 
 ### Environment
@@ -96,4 +99,3 @@ If you need raw CDP:
 
 ### License
 MIT
-
