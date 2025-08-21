@@ -127,6 +127,12 @@ export async function runTui() {
         process.exit(0);
       } else {
         // Free text: run AI agent with this as the goal
+        function sanitizeGoal(text) {
+          // Replace U+FFFD replacement chars and any control chars except newline/tab
+          return text
+            .replace(/[\uFFFD]/g, '?')
+            .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ');
+        }
         addLog(`Agent goal: ${cmd}`);
         try {
           await runAgent(cmd, {
@@ -137,6 +143,24 @@ export async function runTui() {
           });
         } catch (e) {
           const msg = e?.message || String(e);
+          // Retry with sanitized text if we hit a bytestream/encoding error
+          if (/bytestream/i.test(msg) || /greater than 255/i.test(msg)) {
+            const cleaned = sanitizeGoal(cmd);
+            if (cleaned !== cmd) {
+              addLog('Detected encoding issue. Retrying with sanitized text...');
+              try {
+                await runAgent(cleaned, {
+                  debug: true,
+                  headless: false,
+                  promptForApiKey: false,
+                  onLog: (m) => addLog(m),
+                });
+                return;
+              } catch (e2) {
+                addLog(`Agent error after sanitize: ${e2?.message || e2}`);
+              }
+            }
+          }
           if (msg.includes('API key')) {
             addLog('OpenRouter API key missing. Use /key <apiKey> to set it.');
           } else {
