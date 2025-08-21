@@ -1,4 +1,4 @@
-import { ensurePage } from './chrome.js';
+import { ensurePage, getBrowser, createChrome } from './chrome.js';
 import { gotoCmd, clickCmd, typeCmd } from './commands.js';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -7,7 +7,7 @@ import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { getApiKey, getModel, setApiKey } from './config.js';
 
-export async function runAgent(goal, { model } = {}) {
+export async function runAgent(goal, { model, headless = false, debug = false } = {}) {
   let apiKey = getApiKey();
   if (!apiKey) {
     const rl = readline.createInterface({ input, output });
@@ -30,15 +30,17 @@ export async function runAgent(goal, { model } = {}) {
     { name: 'done', description: 'Finish when goal achieved', params: ['result'] }
   ];
 
-  const page = await ensurePage();
+  let page = null;
 
   // Simple loop: ask model what to do next; execute; feed back page title and URL
   for (let step = 0; step < 10; step++) {
-    const context = `Current page: ${await page.title()}\nURL: ${page.url()}`;
+    const context = page
+      ? `Current page: ${await page.title()}\nURL: ${page.url()}`
+      : 'No page open yet';
     const prompt = `Goal: ${goal}\nYou have tools: ${JSON.stringify(tools)}\nState:\n${context}\nRespond with a JSON object: {tool: string, args: object}.`;
 
     const body = {
-      model,
+      model: effectiveModel,
       messages: [
         { role: 'system', content: 'You are a web automation planner. Only output tool calls as JSON.' },
         { role: 'user', content: prompt }
@@ -67,11 +69,14 @@ export async function runAgent(goal, { model } = {}) {
     }
 
     const { tool, args } = plan || {};
-    if (tool === 'goto') await gotoCmd(page, args.url);
-    else if (tool === 'click') await clickCmd(page, args.selector);
-    else if (tool === 'type') await typeCmd(page, args.selector, args.text);
+    async function ensureAgentPage() {
+      try { await getBrowser(); } catch { await createChrome({ headless, debug }); }
+      if (!page) page = await ensurePage();
+    }
+    if (tool === 'goto') { await ensureAgentPage(); await gotoCmd(page, args.url, { silent: true }); }
+    else if (tool === 'click') { await ensureAgentPage(); await clickCmd(page, args.selector, { silent: true }); }
+    else if (tool === 'type') { await ensureAgentPage(); await typeCmd(page, args.selector, args.text, { silent: true }); }
     else if (tool === 'done') { console.log('Done:', args.result); break; }
     else { console.log('Unknown tool, stopping.'); break; }
   }
 }
-

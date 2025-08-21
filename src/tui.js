@@ -1,107 +1,183 @@
 import blessed from 'blessed';
-import readline from 'node:readline/promises';
-import { stdin as input, stdout as output } from 'node:process';
 import { loadConfig, setModel, setApiKey, getApiKey, getModel } from './config.js';
 import { openCmd, gotoCmd, clickCmd, typeCmd } from './commands.js';
-import { withPage, createChrome } from './chrome.js';
+import { withPage, createChrome, cancelCurrentAction } from './chrome.js';
 
 export async function runTui() {
-  await createChrome({ headless: false, debug: true });
+  // Do NOT auto-launch Chrome here; lazily start on first browser command.
 
-  const screen = blessed.screen({ smartCSR: true, title: 'qlood TUI' });
+  const screen = blessed.screen({
+    smartCSR: true,
+    title: 'qlood TUI',
+    fullUnicode: true,
+    dockBorders: true,
+  });
 
   const log = blessed.log({
     top: 0,
     left: 0,
     width: '100%',
-    height: '90%',
-    border: 'line',
-    tags: true,
+    height: '100%-3',
+    border: { type: 'line' },
     scrollable: true,
+    alwaysScroll: true,
     keys: true,
-    mouse: true
+    mouse: true,
+    tags: false,
+    label: ' qlood ' ,
+    content: ''
   });
 
   const input = blessed.textbox({
     bottom: 0,
     left: 0,
-    height: '10%',
+    height: 3, // fixed height avoids flicker with borders
     width: '100%',
     inputOnFocus: true,
-    border: 'line'
+    keys: true,
+    border: { type: 'line' },
+    name: 'input',
   });
 
   screen.append(log);
   screen.append(input);
 
-  log.log('{bold}Welcome to qlood TUI{/bold}');
-  const cfg = loadConfig();
-  log.log(`Model: ${getModel()}`);
-
-  // Prompt for API key if missing
-  let apiKey = getApiKey();
-  if (!apiKey) {
-    const rl = readline.createInterface({ input, output });
-    const entered = await rl.question('Enter your OpenRouter API key: ');
-    rl.close();
-    if (entered) { setApiKey(entered.trim()); apiKey = entered.trim(); log.log('API key saved'); }
-    else { log.log('No API key provided; some features will prompt again.'); }
+  function addLog(message) {
+    log.add(message);
+    log.setScrollPerc(100);
+    screen.render();
   }
 
-  input.focus();
+  addLog('Welcome to qlood TUI');
+  loadConfig();
+  addLog(`Model: ${getModel()}`);
+  const apiKey = getApiKey();
+  if (!apiKey) addLog('No API key found. Use /key <your-key> to set it.');
+  else addLog('API key configured');
+  addLog('Type /help for available commands.');
+
+  // Command history (simple)
+  const history = [];
+  let histIndex = -1;
+
+  async function ensureChromeReady() {
+    // Launch if needed; enable debug so users can see steps.
+    await createChrome({ headless: false, debug: true });
+  }
 
   async function handle(line) {
-    const cmd = line.trim();
+    const cmd = (line || '').trim();
     if (!cmd) return;
+    history.push(cmd);
+    histIndex = history.length;
 
-    if (cmd.startsWith('/model ')) {
-      const m = cmd.replace('/model ', '').trim();
-      setModel(m);
-      log.log(`Model set to ${m}`);
-    } else if (cmd.startsWith('/key ')) {
-      const k = cmd.replace('/key ', '').trim();
-      setApiKey(k);
-      log.log('API key updated');
-    } else if (cmd.startsWith('/open ')) {
-      const url = cmd.replace('/open ', '').trim();
-      await openCmd(url, { debug: true });
-      log.log(`Opened ${url}`);
-    } else if (cmd.startsWith('/goto ')) {
-      const url = cmd.replace('/goto ', '').trim();
-      await withPage((page) => gotoCmd(page, url));
-      log.log(`Goto ${url}`);
-    } else if (cmd.startsWith('/click ')) {
-      const sel = cmd.replace('/click ', '').trim();
-      await withPage((page) => clickCmd(page, sel));
-      log.log(`Clicked ${sel}`);
-    } else if (cmd.startsWith('/type ')) {
-      const rest = cmd.replace('/type ', '');
-      const space = rest.indexOf(' ');
-      if (space === -1) return log.log('Usage: /type <selector> <text>');
-      const sel = rest.slice(0, space);
-      const text = rest.slice(space + 1);
-      await withPage((page) => typeCmd(page, sel, text));
-      log.log(`Typed into ${sel}`);
-    } else if (cmd === '/help') {
-      log.log('Commands: /model <id>, /key <apiKey>, /open <url>, /goto <url>, /click <selector>, /type <selector> <text>');
-    } else if (cmd === '/quit') {
-      return process.exit(0);
-    } else {
-      log.log('Unknown command. Try /help');
+    try {
+      if (cmd.startsWith('/model ')) {
+        const m = cmd.replace('/model ', '').trim();
+        if (!m) return addLog('Usage: /model <id>');
+        setModel(m);
+        addLog(`Model set to ${m}`);
+      } else if (cmd.startsWith('/key ')) {
+        const k = cmd.replace('/key ', '').trim();
+        if (!k) return addLog('Usage: /key <apiKey>');
+        setApiKey(k);
+        addLog('API key updated');
+      } else if (cmd.startsWith('/open ')) {
+        const url = cmd.replace('/open ', '').trim();
+        if (!url) return addLog('Usage: /open <url>');
+        await openCmd(url, { debug: true, silent: true });
+        addLog(`Opened ${url}`);
+      } else if (cmd.startsWith('/goto ')) {
+        const url = cmd.replace('/goto ', '').trim();
+        if (!url) return addLog('Usage: /goto <url>');
+        await ensureChromeReady();
+        await withPage((page) => gotoCmd(page, url, { silent: true }));
+        addLog(`Goto ${url}`);
+      } else if (cmd.startsWith('/click ')) {
+        const sel = cmd.replace('/click ', '').trim();
+        if (!sel) return addLog('Usage: /click <selector>');
+        await ensureChromeReady();
+        await withPage((page) => clickCmd(page, sel, { silent: true }));
+        addLog(`Clicked ${sel}`);
+      } else if (cmd.startsWith('/type ')) {
+        const rest = cmd.replace('/type ', '');
+        const space = rest.indexOf(' ');
+        if (space === -1) return addLog('Usage: /type <selector> <text>');
+        const sel = rest.slice(0, space).trim();
+        const text = rest.slice(space + 1);
+        if (!sel) return addLog('Usage: /type <selector> <text>');
+        await ensureChromeReady();
+        await withPage((page) => typeCmd(page, sel, text, { silent: true }));
+        addLog(`Typed into ${sel}`);
+      } else if (cmd === '/help') {
+        addLog('Commands:');
+        addLog('  /model <id>');
+        addLog('  /key <apiKey>');
+        addLog('  /open <url>');
+        addLog('  /goto <url>');
+        addLog('  /click <selector>');
+        addLog('  /type <selector> <text>');
+        addLog('  /quit');
+      } else if (cmd === '/quit') {
+        screen.destroy();
+        process.exit(0);
+      } else {
+        addLog('Unknown command. Try /help');
+      }
+    } catch (e) {
+      addLog(`Error: ${e?.message || e}`);
     }
   }
 
-  input.key('enter', async () => {
-    input.readInput((err, value) => {
-      const line = value || input.getValue();
-      input.clearValue();
-      screen.render();
-      handle(line).catch((e) => log.log(`Error: ${e.message}`));
-    });
+  // Use submit event rather than nested readInput calls
+  input.on('submit', async (value) => {
+    const line = value ?? input.getValue();
+    input.clearValue();
+    screen.render();
+    await handle(line);
+    input.focus();
   });
 
-  screen.key(['C-c', 'q'], () => process.exit(0));
+  // History navigation
+  input.key(['up'], () => {
+    if (!history.length) return;
+    histIndex = Math.max(0, histIndex - 1);
+    input.setValue(history[histIndex] ?? '');
+    screen.render();
+  });
+  input.key(['down'], () => {
+    if (!history.length) return;
+    histIndex = Math.min(history.length, histIndex + 1);
+    input.setValue(history[histIndex] ?? '');
+    screen.render();
+  });
 
+  // Ctrl+C behavior: first cancels current action (closes browser),
+  // second within 1.5s exits the TUI.
+  let lastCtrlC = 0;
+  screen.key(['C-c'], async () => {
+    const now = Date.now();
+    if (now - lastCtrlC < 1500) {
+      screen.destroy();
+      process.exit(0);
+      return;
+    }
+    lastCtrlC = now;
+    addLog('Cancel requested. Press Ctrl+C again to exit.');
+    try {
+      await cancelCurrentAction();
+      addLog('Current action cancelled.');
+    } catch (e) {
+      addLog(`Cancel error: ${e?.message || e}`);
+    }
+  });
+
+  // 'q' to quit directly
+  screen.key(['q'], () => {
+    screen.destroy();
+    process.exit(0);
+  });
+
+  input.focus();
   screen.render();
 }
-
