@@ -81,18 +81,64 @@ const toolRegistry = {
       additionalProperties: false,
     },
     handler: async (page, args) => {
+      const selector = String(args.selector);
+      const text = String(args.query);
       try {
-        await page.waitForSelector(args.selector, { timeout: 10000 });
-        await page.click(args.selector); // Focus the input
-        await page.evaluate((sel) => {
-          const input = document.querySelector(sel);
-          if (input) input.value = '';
-        }, args.selector); // Clear the input
-        await page.type(args.selector, args.query);
+        // Prefer a visible element when waiting
+        await page.waitForSelector(selector, { timeout: 10000, visible: true });
+
+        // Resolve the primary handle
+        let handle = await page.$(selector);
+        if (!handle) throw new Error(`Search target not found: ${selector}`);
+
+        // If the match is a container (e.g. form or div), try to find an input-like descendant
+        const tagName = await page.evaluate(el => el.tagName, handle);
+        let target = handle;
+        if (!['INPUT', 'TEXTAREA'].includes(tagName)) {
+          const inner = await handle.$('input, textarea, [contenteditable=""], [contenteditable="true"]');
+          if (inner) target = inner;
+        }
+
+        // Try to focus/click the target. If clicking fails due to overlays, fall back to programmatic focus
+        try {
+          await target.click({ delay: 10 });
+        } catch (clickErr) {
+          // Attempt to bring it into view and focus programmatically
+          try {
+            await page.evaluate(el => { el.scrollIntoView({ block: 'center', inline: 'center' }); }, target);
+            await page.evaluate(el => { if (el && typeof el.focus === 'function') el.focus(); }, target);
+          } catch (_) {
+            throw clickErr;
+          }
+        }
+
+        // Clear existing value while firing input events
+        await page.evaluate(el => {
+          if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+            el.value = '';
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+          } else if (el && el.isContentEditable) {
+            el.textContent = '';
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        }, target);
+
+        // Type into the resolved element handle for robustness
+        const typeSupported = await page.evaluate(el => {
+          return !!(el instanceof HTMLElement);
+        }, target);
+        if (typeSupported) {
+          await target.type(text);
+        } else {
+          // Fallback to page-level typing
+          await page.type(selector, text);
+        }
+
+        // Submit via Enter. If a surrounding form exists, Enter will submit it.
         await page.keyboard.press('Enter');
       } catch (error) {
         if (error.message.includes('detached')) {
-          throw new Error(`Search failed - page detached: ${args.selector}`);
+          throw new Error(`Search failed - page detached: ${selector}`);
         }
         throw error;
       }
