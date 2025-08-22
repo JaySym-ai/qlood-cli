@@ -67,7 +67,7 @@ const toolRegistry = {
       required: [],
       additionalProperties: false,
     },
-    handler: async (page, args) => page.keyboard.press('Enter'),
+    handler: async (page) => page.keyboard.press('Enter'),
   },
   search: {
     description: 'Type search query and submit (combines typing + enter)',
@@ -81,11 +81,21 @@ const toolRegistry = {
       additionalProperties: false,
     },
     handler: async (page, args) => {
-      await page.waitForSelector(args.selector, { timeout: 10000 });
-      await page.click(args.selector); // Focus the input
-      await page.keyboard.selectAll(); // Clear existing text
-      await page.type(args.selector, args.query);
-      await page.keyboard.press('Enter');
+      try {
+        await page.waitForSelector(args.selector, { timeout: 10000 });
+        await page.click(args.selector); // Focus the input
+        await page.evaluate((sel) => {
+          const input = document.querySelector(sel);
+          if (input) input.value = '';
+        }, args.selector); // Clear the input
+        await page.type(args.selector, args.query);
+        await page.keyboard.press('Enter');
+      } catch (error) {
+        if (error.message.includes('detached')) {
+          throw new Error(`Search failed - page detached: ${args.selector}`);
+        }
+        throw error;
+      }
     },
   },
   done: {
@@ -176,9 +186,22 @@ export async function runAgent(goal, { model, headless = false, debug = false, p
 
   // Simple loop: ask model what to do next; execute; feed back page title and URL
   for (let step = 0; step < 10; step++) {
-    const context = page
-      ? `Current page: ${await page.title()}\nURL: ${page.url()}`
-      : 'No page open yet';
+    let context = 'No page open yet';
+    if (page) {
+      try {
+        const title = await page.title();
+        const url = page.url();
+        context = `Current page: ${title}\nURL: ${url}`;
+      } catch (error) {
+        if (error.message.includes('detached')) {
+          context = 'Page detached - will reconnect on next action';
+          page = null; // Force reconnection
+        } else {
+          context = 'Page error - will reconnect';
+          page = null;
+        }
+      }
+    }
     
     const historyText = actionHistory.length > 0 
       ? `\nRecent actions:\n${actionHistory.slice(-3).map((h, i) => `${actionHistory.length - 3 + i + 1}. ${h}`).join('\n')}`
@@ -253,7 +276,17 @@ Respond ONLY with a single JSON object representing a tool call. Accepted shapes
     const { tool, args } = coerced;
   async function ensureAgentPage() {
     try { await getBrowser(); } catch { await createChrome({ headless, debug }); }
-    if (!page) page = await ensurePage();
+    
+    // Always refresh the page reference to handle detached frames
+    page = await ensurePage();
+    
+    // Verify page is accessible
+    try {
+      await page.evaluate(() => document.readyState);
+    } catch (error) {
+      if (debug && onLog) onLog('Page became detached, getting fresh page...');
+      page = await ensurePage();
+    }
   }
   if (onLog) onLog(`Tool: ${tool} ${args ? JSON.stringify(args) : ''}`);
   if (tool === 'done') { 

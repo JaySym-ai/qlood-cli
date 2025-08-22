@@ -9,8 +9,15 @@ export async function openCmd(url, opts = {}) {
 }
 
 export async function gotoCmd(page, url, { silent = false } = {}) {
-  await page.goto(url, { waitUntil: 'domcontentloaded' });
-  if (!silent) console.log(`Navigated to: ${url}`);
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    if (!silent) console.log(`Navigated to: ${url}`);
+  } catch (error) {
+    if (error.message.includes('detached')) {
+      throw new Error(`Navigation failed - page detached: ${url}`);
+    }
+    throw error;
+  }
 }
 
 export async function clickCmd(page, selector, { silent = false } = {}) {
@@ -64,7 +71,14 @@ export async function clickCmd(page, selector, { silent = false } = {}) {
 }
 
 export async function typeCmd(page, selector, text, { silent = false } = {}) {
-  await page.waitForSelector(selector, { timeout: 10000 });
-  await page.type(selector, text);
-  if (!silent) console.log(`Typed into ${selector}: ${text}`);
+  try {
+    await page.waitForSelector(selector, { timeout: 10000 });
+    await page.type(selector, text);
+    if (!silent) console.log(`Typed into ${selector}: ${text}`);
+  } catch (error) {
+    if (error.message.includes('detached')) {
+      throw new Error(`Typing failed - page detached: ${selector}`);
+    }
+    throw error;
+  }
 }

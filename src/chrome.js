@@ -73,7 +73,22 @@ export async function screenshot(page, path) {
 
 export async function ensurePage() {
   const b = await getBrowser();
-  if (!currentPage) currentPage = await b.newPage();
+  
+  // Check if current page is detached or closed
+  if (currentPage) {
+    try {
+      await currentPage.evaluate(() => document.title);
+    } catch (error) {
+      // Page is detached/closed, create a new one
+      console.log('Page detached, creating new page...');
+      currentPage = null;
+    }
+  }
+  
+  if (!currentPage) {
+    currentPage = await b.newPage();
+  }
+  
   return currentPage;
 }
 
