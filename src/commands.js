@@ -1,5 +1,51 @@
 import { createChrome, ensurePage } from './chrome.js';
 
+// Best-effort: dismiss common consent/cookie overlays (Google/YouTube and similar)
+export async function dismissConsentIfPresent(page) {
+  const selectors = [
+    // Google/YouTube variants
+    'button[aria-label*="Accept" i]',
+    'button[aria-label*="Agree" i]',
+    '#introAgreeButton',
+    'button[aria-label="Accept all"]',
+    'button[aria-label="I agree"]',
+    'form[action*="consent"] button[type="submit"]',
+  ];
+
+  async function tryClickInContext(ctx) {
+    for (const sel of selectors) {
+      try {
+        await ctx.waitForSelector(sel, { timeout: 800, visible: true });
+        await ctx.click(sel);
+        await ctx.waitForTimeout(300);
+        return true;
+      } catch (_) {
+        // continue
+      }
+    }
+    return false;
+  }
+
+  try {
+    // Try in main frame first
+    if (await tryClickInContext(page)) return true;
+    // Try in iframes (e.g., consent.google.com)
+    const frames = page.frames();
+    for (const f of frames) {
+      try {
+        // Heuristic: only try in consent-related frames or all as fallback
+        const url = f.url() || '';
+        if (url.includes('consent') || url.includes('privacy')) {
+          if (await tryClickInContext(f)) return true;
+        }
+      } catch (_) {}
+    }
+    // Last pass: try in all frames briefly
+    for (const f of frames) { if (await tryClickInContext(f)) return true; }
+  } catch (_) {}
+  return false;
+}
+
 export async function openCmd(url, opts = {}) {
   const { headless = false, debug = false, silent = false } = opts;
   await createChrome({ headless, debug });
@@ -11,6 +57,8 @@ export async function openCmd(url, opts = {}) {
 export async function gotoCmd(page, url, { silent = false } = {}) {
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
+    // Best-effort: dismiss consent dialogs that may block interactions
+    try { await dismissConsentIfPresent(page); } catch {}
     if (!silent) console.log(`Navigated to: ${url}`);
   } catch (error) {
     if (error.message.includes('detached')) {

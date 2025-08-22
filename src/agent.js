@@ -230,6 +230,9 @@ export async function runAgent(goal, { model, headless = false, debug = false, p
 
   let page = null;
 
+  // Helper to add small human-like delays
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
   // Simple loop: ask model what to do next; execute; feed back page title and URL
   for (let step = 0; step < 10; step++) {
     let context = 'No page open yet';
@@ -347,6 +350,8 @@ Respond ONLY with a single JSON object representing a tool call. Accepted shapes
     break; 
   }
   await ensureAgentPage();
+  // Small randomized delay before actions to avoid bursty behavior
+  await sleep(300 + Math.floor(Math.random() * 500));
   await entry.handler(page, args || {});
   
   // Record the action in history

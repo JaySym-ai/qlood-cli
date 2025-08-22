@@ -6,26 +6,42 @@ let browser = null;
 let currentPage = null;
 let launchOptions = null;
 
-export async function createChrome({ headless = false, debug = false } = {}) {
+// Options:
+// - headless: boolean
+// - debug: boolean (enables slowMo for visibility; does NOT auto-open devtools)
+// - devtools: boolean (explicitly open Chrome DevTools)
+// - maximize: boolean (start window maximized)
+// - windowSize: { width: number, height: number }
+export async function createChrome({ headless = false, debug = false, devtools = false, maximize = true, windowSize } = {}) {
   if (browser) return browser;
   // Save the first launch options and reuse conceptually for the session
-  if (!launchOptions) launchOptions = { headless, debug };
-  const userDataDir = path.join(os.tmpdir(), 'qlood-profile');
+  if (!launchOptions) launchOptions = { headless, debug, devtools, maximize, windowSize };
+  // Use a persistent profile in the user home to look like a stable browser
+  const userDataDir = path.join(os.homedir(), '.qlood-profile');
+  const args = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-crash-reporter',
+    '--no-default-browser-check',
+  ];
+  if (launchOptions.maximize) args.push('--start-maximized');
+  if (launchOptions.windowSize && !launchOptions.maximize) {
+    const { width, height } = launchOptions.windowSize;
+    if (width && height) args.push(`--window-size=${width},${height}`);
+  }
+
   browser = await puppeteer.launch({
     headless: launchOptions.headless ?? !launchOptions.debug,
-    devtools: !!launchOptions.debug,
+    devtools: !!launchOptions.devtools,
+    defaultViewport: null, // let viewport match the browser window size
     // slowMo is useful in debug to watch steps
     ...(launchOptions.debug ? { slowMo: 100 } : {}),
     userDataDir,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-crash-reporter',
-      '--no-default-browser-check',
-    ],
+    args,
   });
   const pages = await browser.pages();
   currentPage = pages[0] || (await browser.newPage());
+  try { await currentPage.bringToFront(); } catch {}
   // Best-effort cleanup on exit
   process.on('exit', async () => {
     try { await browser?.close?.(); } catch {}

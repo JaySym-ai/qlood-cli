@@ -84,8 +84,8 @@ export async function runTui() {
   let histIndex = -1;
 
   async function ensureChromeReady() {
-    // Launch if needed; enable debug so users can see steps.
-    await createChrome({ headless: false, debug: true });
+    // Launch if needed; open normal window, maximized, no DevTools.
+    await createChrome({ headless: false, debug: false, devtools: false, maximize: true });
   }
 
   async function handle(line) {
