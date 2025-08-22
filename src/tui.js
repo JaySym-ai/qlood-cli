@@ -2,7 +2,7 @@ import blessed from 'blessed';
 import { loadConfig, setModel, setApiKey, getApiKey, getModel } from './config.js';
 import { openCmd, gotoCmd, clickCmd, typeCmd } from './commands.js';
 import { withPage, createChrome, cancelCurrentAction } from './chrome.js';
-import { runAgent } from './agent.js';
+import { runAgent, cancelAgentRun } from './agent.js';
 
 export async function runTui() {
   // Do NOT auto-launch Chrome here; lazily start on first browser command.
@@ -44,6 +44,7 @@ export async function runTui() {
     keys: true,
     mouse: true,
     tags: true,
+    label: ' qlood ',
     content: ''
   });
 
@@ -76,7 +77,8 @@ export async function runTui() {
   screen.append(statusBar);
   screen.append(input);
 
-  let workingIndicator = null;
+  let spinnerTimer = null;
+  let labelTimer = null;
   const spinnerFrames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
   let spinnerIndex = 0;
   let working = false;
@@ -101,19 +103,27 @@ export async function runTui() {
 
   function showWorking() {
     working = true;
-    if (workingIndicator) return;
-    workingIndicator = setInterval(() => {
-      spinnerIndex = (spinnerIndex + 1) % spinnerFrames.length;
-      renderHeader();
-      screen.render();
-    }, 120);
+    if (!spinnerTimer) {
+      spinnerTimer = setInterval(() => {
+        spinnerIndex = (spinnerIndex + 1) % spinnerFrames.length;
+        renderHeader();
+        screen.render();
+      }, 120);
+    }
+    if (!labelTimer) {
+      let dots = '';
+      labelTimer = setInterval(() => {
+        dots = dots.length >= 3 ? '' : dots + '.';
+        log.setLabel(` qlood - Working${dots} `);
+        screen.render();
+      }, 500);
+    }
   }
 
   function hideWorking() {
-    if (workingIndicator) {
-      clearInterval(workingIndicator);
-      workingIndicator = null;
-    }
+    if (spinnerTimer) { clearInterval(spinnerTimer); spinnerTimer = null; }
+    if (labelTimer) { clearInterval(labelTimer); labelTimer = null; }
+    log.setLabel(' qlood ');
     working = false;
     renderHeader();
     screen.render();
@@ -288,8 +298,7 @@ export async function runTui() {
     screen.render();
   });
 
-  // Ctrl+C behavior: first cancels current action (closes browser),
-  // second within 1.5s exits the TUI.
+  // Ctrl+C behavior: first cancels agent + browser action, second within 1.5s exits the TUI.
   let lastCtrlC = 0;
   screen.key(['C-c'], async () => {
     const now = Date.now();
@@ -299,12 +308,33 @@ export async function runTui() {
       return;
     }
     lastCtrlC = now;
-    addLog('Cancel requested. Press Ctrl+C again to exit.');
+    addLog('{yellow-fg}Cancel requested{/}. Press Ctrl+C again to exit.');
     try {
+      // Abort in-flight LLM call
+      cancelAgentRun();
       await cancelCurrentAction();
-      addLog('Current action cancelled.');
+      addLog('{green-fg}Current action cancelled.{/}');
     } catch (e) {
       addLog(`Cancel error: ${e?.message || e}`);
+    }
+  });
+
+  // Also catch SIGINT directly (mac terminals may deliver SIGINT instead of key binding)
+  process.on('SIGINT', async () => {
+    try {
+      cancelAgentRun();
+      await cancelCurrentAction();
+      hideWorking();
+    } finally {
+      // Do not exit on first SIGINT; require second as above
+      const now = Date.now();
+      if (now - lastCtrlC < 1500) {
+        screen.destroy();
+        process.exit(0);
+      } else {
+        lastCtrlC = now;
+        addLog('{yellow-fg}Cancel requested via SIGINT{/}. Press Ctrl+C again to exit.');
+      }
     }
   });
 

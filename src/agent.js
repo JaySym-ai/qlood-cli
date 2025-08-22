@@ -3,6 +3,12 @@ import { gotoCmd, clickCmd, typeCmd } from './commands.js';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
+// Simple cancellation wiring for the in-flight agent loop/fetch
+let currentAbortController = null;
+export function cancelAgentRun() {
+  try { currentAbortController?.abort?.(); } catch {}
+}
+
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { getApiKey, getModel, setApiKey } from './config.js';
@@ -296,6 +302,9 @@ Respond ONLY with a single JSON object representing a tool call. Accepted shapes
     // Only remove problematic Unicode replacement characters from API key
     const sanitizedApiKey = apiKey.replace(/[\uFFFD]/g, '');
 
+    // Support cancellation
+    const controller = new AbortController();
+    currentAbortController = controller;
     const resp = await fetch(OPENROUTER_URL, {
       method: 'POST',
       headers: {
@@ -304,8 +313,10 @@ Respond ONLY with a single JSON object representing a tool call. Accepted shapes
         'HTTP-Referer': 'https://github.com/owner/repo',
         'X-Title': 'qlood-cli agent'
       },
-      body: bodyString
+      body: bodyString,
+      signal: controller.signal,
     });
+    currentAbortController = null;
 
     if (!resp.ok) throw new Error(`OpenRouter error: ${resp.status}`);
     const data = await resp.json();
