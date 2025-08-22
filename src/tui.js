@@ -14,18 +14,46 @@ export async function runTui() {
     dockBorders: true,
   });
 
-  const log = blessed.log({
+  // Layout: Header (3) | Log (flex) | Footer status (1) | Input (3)
+  const header = blessed.box({
     top: 0,
     left: 0,
     width: '100%',
-    height: '100%-3',
+    height: 3,
+    tags: true,
+    border: { type: 'line' },
+    style: {
+      border: { fg: 'gray' },
+    },
+    content: ''
+  });
+
+  const log = blessed.log({
+    top: 3,
+    left: 0,
+    width: '100%',
+    height: '100%-7',
     border: { type: 'line' },
     scrollable: true,
     alwaysScroll: true,
+    scrollbar: {
+      ch: ' ',
+      track: { bg: 'black' },
+      style: { bg: 'cyan' },
+    },
     keys: true,
     mouse: true,
-    tags: false,
-    label: ' qlood ' ,
+    tags: true,
+    content: ''
+  });
+
+  const statusBar = blessed.box({
+    bottom: 3,
+    left: 0,
+    height: 1,
+    width: '100%',
+    tags: true,
+    style: { fg: 'gray' },
     content: ''
   });
 
@@ -37,14 +65,34 @@ export async function runTui() {
     inputOnFocus: true,
     keys: true,
     border: { type: 'line' },
+    style: {
+      border: { fg: 'gray' },
+    },
     name: 'input',
   });
 
+  screen.append(header);
   screen.append(log);
+  screen.append(statusBar);
   screen.append(input);
 
   let workingIndicator = null;
+  const spinnerFrames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+  let spinnerIndex = 0;
+  let working = false;
   
+  function renderHeader() {
+    const model = getModel();
+    const k = getApiKey();
+    const keyState = k ? '{green-fg}API key ✓{/}' : '{red-fg}API key ✗{/}';
+    const state = working ? `{cyan-fg}${spinnerFrames[spinnerIndex]} Working...{/}` : '{gray-fg}Idle{/}';
+    header.setContent(
+      '{bold}{cyan-fg} qlood {/} {gray-fg}TUI{/}\n' +
+      ` ${state}   {blue-fg}Model:{/} ${model}   ${keyState}\n` +
+      ' {gray-fg}Enter free text to run the agent. Type {/}{bold}/help{/}{gray-fg} for commands.{/}'
+    );
+  }
+
   function addLog(message) {
     log.add(message);
     log.setScrollPerc(100);
@@ -52,32 +100,39 @@ export async function runTui() {
   }
 
   function showWorking() {
+    working = true;
     if (workingIndicator) return;
-    let dots = '';
     workingIndicator = setInterval(() => {
-      dots = dots.length >= 3 ? '' : dots + '.';
-      log.setLabel(` qlood - Working${dots} `);
+      spinnerIndex = (spinnerIndex + 1) % spinnerFrames.length;
+      renderHeader();
       screen.render();
-    }, 500);
+    }, 120);
   }
 
   function hideWorking() {
     if (workingIndicator) {
       clearInterval(workingIndicator);
       workingIndicator = null;
-      log.setLabel(' qlood ');
-      screen.render();
     }
+    working = false;
+    renderHeader();
+    screen.render();
   }
 
-  addLog('Welcome to qlood TUI');
+  addLog('{bold}Welcome to qlood TUI{/}');
   loadConfig();
-  addLog(`Model: ${getModel()}`);
+  addLog(`Model: {blue-fg}${getModel()}{/}`);
   const apiKey = getApiKey();
-  if (!apiKey) addLog('No API key found. Use /key <your-key> to set it.');
-  else addLog('API key configured');
-  addLog('Type /help for available commands.');
+  if (!apiKey) addLog('{yellow-fg}No API key found. Use{/} {bold}/key <your-key>{/} {yellow-fg}to set it.{/}');
+  else addLog('{green-fg}API key configured{/}');
+  addLog('Type {bold}/help{/} for available commands.');
   addLog('Tip: enter free text (no /) to run the AI agent.');
+
+  function renderStatus() {
+    statusBar.setContent('{gray-fg}Keys: Enter run  •  Up/Down history  •  Ctrl+C cancel  •  q quit{/}');
+  }
+  renderHeader();
+  renderStatus();
 
   // Command history (simple)
   const history = [];
@@ -133,27 +188,27 @@ export async function runTui() {
         await withPage((page) => typeCmd(page, sel, text, { silent: true }));
         addLog(`Typed into ${sel}`);
       } else if (cmd === '/help') {
-        addLog('Commands:');
-        addLog('  /model <id>');
-        addLog('  /key <apiKey>');
-        addLog('  /open <url>');
-        addLog('  /goto <url>');
-        addLog('  /click <selector>');
-        addLog('  /type <selector> <text>');
-        addLog('  /tools');
-        addLog('  /quit');
+        addLog('{bold}Commands:{/}');
+        addLog('  {cyan-fg}/model <id>{/}');
+        addLog('  {cyan-fg}/key <apiKey>{/}');
+        addLog('  {cyan-fg}/open <url>{/}');
+        addLog('  {cyan-fg}/goto <url>{/}');
+        addLog('  {cyan-fg}/click <selector>{/}');
+        addLog('  {cyan-fg}/type <selector> <text>{/}');
+        addLog('  {cyan-fg}/tools{/}');
+        addLog('  {cyan-fg}/quit{/}');
         addLog('');
         addLog('Free text (no /): run the AI agent with your request.');
-        addLog('Agent tools: goto(url), click(selector), type(selector,text), search(selector,query), pressEnter(), screenshot(path?), scroll(y), done(result)');
+        addLog('{gray-fg}Agent tools:{/} {blue-fg}goto{/}(url), {blue-fg}click{/}(selector), {blue-fg}type{/}(selector,text), {blue-fg}search{/}(selector,query), {blue-fg}pressEnter{/}(), {blue-fg}screenshot{/}(path?), {blue-fg}scroll{/}(y), {blue-fg}done{/}(result)');
       } else if (cmd === '/tools') {
         addLog('Available tools:');
-        addLog('  goto(url): Navigate to URL');
-        addLog('  click(selector): Click element');
-        addLog('  type(selector, text): Type text');
-        addLog('  search(selector, query): Type and submit search');
-        addLog('  pressEnter(): Press Enter key');
-        addLog('  screenshot(path?): Save screenshot (default screenshot.png)');
-        addLog('  scroll(y): Scroll by y pixels (positive=down)');
+        addLog('  {blue-fg}goto{/}(url): Navigate to URL');
+        addLog('  {blue-fg}click{/}(selector): Click element');
+        addLog('  {blue-fg}type{/}(selector, text): Type text');
+        addLog('  {blue-fg}search{/}(selector, query): Type and submit search');
+        addLog('  {blue-fg}pressEnter{/}(): Press Enter key');
+        addLog('  {blue-fg}screenshot{/}(path?): Save screenshot (default screenshot.png)');
+        addLog('  {blue-fg}scroll{/}(y): Scroll by y pixels (positive=down)');
       } else if (cmd === '/quit') {
         screen.destroy();
         process.exit(0);
@@ -171,7 +226,7 @@ export async function runTui() {
         }
         // Sanitize the goal upfront to prevent encoding issues
         const sanitizedCmd = sanitizeGoal(cmd);
-        addLog(`Agent goal: ${sanitizedCmd}`);
+        addLog(`Agent goal: {bold}${sanitizedCmd}{/}`);
         showWorking();
         try {
           await runAgent(sanitizedCmd, {
@@ -182,7 +237,7 @@ export async function runTui() {
           });
         } catch (e) {
           const msg = e?.message || String(e);
-          addLog(`Agent error: ${msg}`);
+          addLog(`{red-fg}Agent error:{/} ${msg}`);
           if (msg.includes('API key')) {
             addLog('OpenRouter API key missing. Use /key <apiKey> to set it.');
           }
@@ -197,7 +252,7 @@ export async function runTui() {
         }
       }
     } catch (e) {
-      addLog(`Error: ${e?.message || e}`);
+      addLog(`{red-fg}Error:{/} ${e?.message || e}`);
     }
   }
 
@@ -208,6 +263,15 @@ export async function runTui() {
     screen.render();
     await handle(line);
     input.focus();
+  });
+
+  input.on('focus', () => {
+    input.style.border = { fg: 'cyan' };
+    screen.render();
+  });
+  input.on('blur', () => {
+    input.style.border = { fg: 'gray' };
+    screen.render();
   });
 
   // History navigation
