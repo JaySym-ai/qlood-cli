@@ -43,10 +43,31 @@ export async function runTui() {
   screen.append(log);
   screen.append(input);
 
+  let workingIndicator = null;
+  
   function addLog(message) {
     log.add(message);
     log.setScrollPerc(100);
     screen.render();
+  }
+
+  function showWorking() {
+    if (workingIndicator) return;
+    let dots = '';
+    workingIndicator = setInterval(() => {
+      dots = dots.length >= 3 ? '' : dots + '.';
+      log.setLabel(` qlood - Working${dots} `);
+      screen.render();
+    }, 500);
+  }
+
+  function hideWorking() {
+    if (workingIndicator) {
+      clearInterval(workingIndicator);
+      workingIndicator = null;
+      log.setLabel(' qlood ');
+      screen.render();
+    }
   }
 
   addLog('Welcome to qlood TUI');
@@ -56,6 +77,7 @@ export async function runTui() {
   if (!apiKey) addLog('No API key found. Use /key <your-key> to set it.');
   else addLog('API key configured');
   addLog('Type /help for available commands.');
+  addLog('Tip: enter free text (no /) to run the AI agent.');
 
   // Command history (simple)
   const history = [];
@@ -118,24 +140,41 @@ export async function runTui() {
         addLog('  /goto <url>');
         addLog('  /click <selector>');
         addLog('  /type <selector> <text>');
+        addLog('  /tools');
         addLog('  /quit');
         addLog('');
         addLog('Free text (no /): run the AI agent with your request.');
-        addLog('Agent tools: goto(url), click(selector), type(selector,text), screenshot(path?), scroll(y), done(result)');
+        addLog('Agent tools: goto(url), click(selector), type(selector,text), search(selector,query), pressEnter(), screenshot(path?), scroll(y), done(result)');
+      } else if (cmd === '/tools') {
+        addLog('Available tools:');
+        addLog('  goto(url): Navigate to URL');
+        addLog('  click(selector): Click element');
+        addLog('  type(selector, text): Type text');
+        addLog('  search(selector, query): Type and submit search');
+        addLog('  pressEnter(): Press Enter key');
+        addLog('  screenshot(path?): Save screenshot (default screenshot.png)');
+        addLog('  scroll(y): Scroll by y pixels (positive=down)');
       } else if (cmd === '/quit') {
         screen.destroy();
         process.exit(0);
       } else {
         // Free text: run AI agent with this as the goal
         function sanitizeGoal(text) {
-          // Replace U+FFFD replacement chars and any control chars except newline/tab
+          // Replace problematic Unicode chars that can cause ByteString issues
           return text
-            .replace(/[\uFFFD]/g, '?')
-            .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ');
+            .replace(/[\uFFFD]/g, '?')  // replacement characters
+            .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')  // control chars
+            .replace(/[\u{10000}-\u{10FFFF}]/gu, '?')  // 4-byte Unicode
+            .replace(/[^\x00-\xFF]/g, '?')  // non-Latin-1 characters
+            .normalize('NFD')  // decompose Unicode
+            .replace(/[\u0300-\u036f]/g, '');  // remove combining marks
         }
-        addLog(`Agent goal: ${cmd}`);
+        // Sanitize the goal upfront to prevent encoding issues
+        const sanitizedCmd = sanitizeGoal(cmd);
+        addLog(`Agent goal: ${sanitizedCmd}`);
+        showWorking();
         try {
-          await runAgent(cmd, {
+          await runAgent(sanitizedCmd, {
             debug: true,
             headless: false,
             promptForApiKey: false,
@@ -143,29 +182,18 @@ export async function runTui() {
           });
         } catch (e) {
           const msg = e?.message || String(e);
-          // Retry with sanitized text if we hit a bytestream/encoding error
-          if (/bytestream/i.test(msg) || /greater than 255/i.test(msg)) {
-            const cleaned = sanitizeGoal(cmd);
-            if (cleaned !== cmd) {
-              addLog('Detected encoding issue. Retrying with sanitized text...');
-              try {
-                await runAgent(cleaned, {
-                  debug: true,
-                  headless: false,
-                  promptForApiKey: false,
-                  onLog: (m) => addLog(m),
-                });
-                return;
-              } catch (e2) {
-                addLog(`Agent error after sanitize: ${e2?.message || e2}`);
-              }
-            }
-          }
+          addLog(`Agent error: ${msg}`);
           if (msg.includes('API key')) {
             addLog('OpenRouter API key missing. Use /key <apiKey> to set it.');
-          } else {
-            addLog(`Agent error: ${msg}`);
           }
+          // Log the full error for debugging
+          addLog(`Full error details: ${JSON.stringify({
+            name: e?.name,
+            message: e?.message,
+            stack: e?.stack?.split('\n')[0]
+          })}`);
+        } finally {
+          hideWorking();
         }
       }
     } catch (e) {

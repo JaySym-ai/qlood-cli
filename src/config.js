@@ -32,7 +32,8 @@ export function setModel(model) {
 
 export function setApiKey(key) {
   const cfg = loadConfig();
-  cfg.apiKey = key;
+  // Sanitize API key to prevent Unicode corruption
+  cfg.apiKey = key.replace(/[\uFFFD]/g, '').trim();
   saveConfig(cfg);
 }
 
