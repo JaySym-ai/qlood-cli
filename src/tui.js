@@ -1,9 +1,10 @@
 import blessed from 'blessed';
+import fs from 'fs';
 import { loadConfig, setModel, setApiKey, getApiKey, getModel } from './config.js';
 import { openCmd, gotoCmd, clickCmd, typeCmd } from './commands.js';
 import { withPage, createChrome, cancelCurrentAction } from './chrome.js';
 import { runAgent, cancelAgentRun } from './agent.js';
-import { ensureProjectInit, loadProjectConfig } from './project.js';
+import { ensureProjectInit, loadProjectConfig, getProjectStructurePath, saveProjectStructure, scanProject } from './project.js';
 import { runProjectTest } from './test.js';
 
 export async function runTui() {
@@ -142,12 +143,24 @@ export async function runTui() {
 
   // If project isn't initialized, prompt to initialize
   let expectingInitConfirm = false;
+  let expectingStructureUpdateConfirm = false;
   const projectCfg = loadProjectConfig(process.cwd());
   if (!projectCfg) {
     expectingInitConfirm = true;
     addLog('{yellow-fg}This project is not initialized for qlood.{/}');
     addLog('We can create ./.qlood, scan your project to set sensible defaults (URL, start command), and add a basic workflow.');
     addLog('Initialize now? {bold}y{/}/n');
+  } else {
+    const structurePath = getProjectStructurePath(process.cwd());
+    if (fs.existsSync(structurePath)) {
+      const storedStructure = JSON.parse(fs.readFileSync(structurePath, 'utf-8'));
+      const currentStructure = scanProject(process.cwd());
+      if (JSON.stringify(storedStructure) !== JSON.stringify(currentStructure)) {
+        expectingStructureUpdateConfirm = true;
+        addLog('{yellow-fg}Project structure has changed.{/}')
+        addLog('Update qlood knowledge about the project? {bold}y{/}/n');
+      }
+    }
   }
 
   function renderStatus() {
@@ -178,12 +191,31 @@ export async function runTui() {
           ensureProjectInit({});
           const cfg = loadProjectConfig(process.cwd());
           addLog(`{green-fg}Initialized ./.qlood{/} (url: ${cfg?.devServer?.url || 'n/a'}, start: ${cfg?.devServer?.start || 'n/a'})`);
+          addLog('You can now run a test with {bold}/test <your scenario>{/} or type a goal for the agent.');
           expectingInitConfirm = false;
           return;
         } else if (ans === 'n' || ans === 'no') {
           addLog('{red-fg}Initialization declined. Exiting qlood...{/}');
           // small delay to allow user to read
           setTimeout(() => { screen.destroy(); process.exit(0); }, 300);
+          return;
+        } else {
+          addLog('Please answer with y or n.');
+          return;
+        }
+      }
+      if (expectingStructureUpdateConfirm) {
+        const ans = cmd.toLowerCase();
+        if (ans === 'y' || ans === 'yes') {
+          const currentStructure = scanProject(process.cwd());
+          saveProjectStructure(currentStructure, process.cwd());
+          addLog(`{green-fg}Project structure updated.{/}`);
+          addLog('You can now continue using qlood.');
+          expectingStructureUpdateConfirm = false;
+          return;
+        } else if (ans === 'n' || ans === 'no') {
+          addLog('{red-fg}Update declined.{/}')
+          expectingStructureUpdateConfirm = false;
           return;
         } else {
           addLog('Please answer with y or n.');
@@ -270,12 +302,12 @@ export async function runTui() {
         function sanitizeGoal(text) {
           // Replace problematic Unicode chars that can cause ByteString issues
           return text
-            .replace(/[\uFFFD]/g, '?')  // replacement characters
-            .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')  // control chars
-            .replace(/[\u{10000}-\u{10FFFF}]/gu, '?')  // 4-byte Unicode
-            .replace(/[^\x00-\xFF]/g, '?')  // non-Latin-1 characters
+            .replace(/[�]/g, '?')  // replacement characters
+            .replace(/[ --]/g, ' ')  // control chars
+            .replace(/[က0-က00]/gu, '?')  // 4-byte Unicode
+            .replace(/[^ -ÿ]/g, '?')  // non-Latin-1 characters
             .normalize('NFD')  // decompose Unicode
-            .replace(/[\u0300-\u036f]/g, '');  // remove combining marks
+            .replace(/[̀-ͯ]/g, '');  // remove combining marks
         }
         // Sanitize the goal upfront to prevent encoding issues
         const sanitizedCmd = sanitizeGoal(cmd);

@@ -113,6 +113,45 @@ export function createBasicWorkflow(cwd = process.cwd()) {
   }
 }
 
+export function scanProject(dir, level = 0) {
+  if (level > 20) return []; // Avoid infinite loops and very deep trees
+  const results = [];
+  const files = fs.readdirSync(dir);
+
+  for (const file of files) {
+    if (file === 'node_modules' || file === '.git' || file === '.qlood') {
+      continue;
+    }
+
+    const filePath = path.join(dir, file);
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.isDirectory()) {
+        results.push({
+          name: file,
+          type: 'directory',
+          children: scanProject(filePath, level + 1),
+        });
+      } else {
+        results.push({ name: file, type: 'file' });
+      }
+    } catch (e) {
+      // Ignore files that we can't stat (e.g. broken symlinks)
+    }
+  }
+  return results;
+}
+
+export function getProjectStructurePath(cwd = process.cwd()) {
+  return path.join(getProjectDir(cwd), 'project-structure.json');
+}
+
+export function saveProjectStructure(structure, cwd = process.cwd()) {
+  ensureProjectDirs(cwd);
+  const p = getProjectStructurePath(cwd);
+  fs.writeFileSync(p, JSON.stringify(structure, null, 2));
+}
+
 export function ensureProjectInit({ cwd = process.cwd(), force = false } = {}) {
   const base = ensureProjectDirs(cwd);
   const p = getProjectConfigPath(cwd);
@@ -120,6 +159,8 @@ export function ensureProjectInit({ cwd = process.cwd(), force = false } = {}) {
     const detected = detectProjectConfig(cwd);
     saveProjectConfig(detected || defaultProjectConfig(), cwd);
     createBasicWorkflow(cwd);
+    const structure = scanProject(cwd);
+    saveProjectStructure(structure, cwd);
   }
   return base;
 }
