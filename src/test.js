@@ -111,11 +111,11 @@ export async function runProjectTest(goal, { headless, debug, onLog } = {}) {
   <li><b>Healthcheck:</b> ${readyPath}</li>
   <li><b>Headless:</b> ${String(headless ?? cfg.browser?.headless ?? false)}</li>
   <li><b>Artifacts dir:</b> ${runDir}</li>
-  <li><b>Initial screenshot:</b> qlood/screenshots/${path.basename(initialShot)}</li>
-  <li><b>Final screenshot:</b> qlood/screenshots/${runId}-final.png</li>
-  <li><b>Agent log:</b> ${path.join('qlood','runs',runId,'agent.log')}</li>
-  <li><b>Browser log:</b> ${path.join('qlood','runs',runId,'browser.log')}</li>
-  <li><b>Network log:</b> ${path.join('qlood','runs',runId,'network.log')}</li>
+  <li><b>Initial screenshot:</b> .qlood/screenshots/${path.basename(initialShot)}</li>
+  <li><b>Final screenshot:</b> .qlood/screenshots/${runId}-final.png</li>
+  <li><b>Agent log:</b> ${path.join('.qlood','runs',runId,'agent.log')}</li>
+  <li><b>Browser log:</b> ${path.join('.qlood','runs',runId,'browser.log')}</li>
+  <li><b>Network log:</b> ${path.join('.qlood','runs',runId,'network.log')}</li>
   </ul>
 <p>Open the artifacts locally to inspect details.</p>
 `;

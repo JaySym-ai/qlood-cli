@@ -146,7 +146,7 @@ export async function runTui() {
   if (!projectCfg) {
     expectingInitConfirm = true;
     addLog('{yellow-fg}This project is not initialized for qlood.{/}');
-    addLog('We can create ./qlood, scan your project to set sensible defaults (URL, start command), and add a basic workflow.');
+    addLog('We can create ./.qlood, scan your project to set sensible defaults (URL, start command), and add a basic workflow.');
     addLog('Initialize now? {bold}y{/}/n');
   }
 
@@ -177,7 +177,7 @@ export async function runTui() {
         if (ans === 'y' || ans === 'yes') {
           ensureProjectInit({});
           const cfg = loadProjectConfig(process.cwd());
-          addLog(`{green-fg}Initialized ./qlood{/} (url: ${cfg?.devServer?.url || 'n/a'}, start: ${cfg?.devServer?.start || 'n/a'})`);
+          addLog(`{green-fg}Initialized ./.qlood{/} (url: ${cfg?.devServer?.url || 'n/a'}, start: ${cfg?.devServer?.start || 'n/a'})`);
           expectingInitConfirm = false;
           return;
         } else if (ans === 'n' || ans === 'no') {

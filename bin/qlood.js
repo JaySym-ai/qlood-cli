@@ -1,4 +1,29 @@
 #!/usr/bin/env node
+import { exec, spawn } from 'child_process';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const packageJson = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+const currentVersion = packageJson.version;
+
+exec('npm view qlood-cli version', (err, stdout) => {
+  if (err) return;
+  const latestVersion = stdout.trim();
+  if (currentVersion !== latestVersion) {
+    console.log(`
+New version available: ${latestVersion}. You are using ${currentVersion}.`);
+    console.log('Auto-updating in the background...');
+    const updater = spawn('npm', ['i', 'qlood-cli'], {
+      detached: true,
+      stdio: 'ignore'
+    });
+    updater.unref();
+  }
+});
+
 import { Command } from 'commander';
 import dotenv from 'dotenv';
 import { createChrome, withPage, screenshot, cancelCurrentAction } from '../src/chrome.js';
@@ -7,6 +32,7 @@ import { runAgent } from '../src/agent.js';
 import { runTui } from '../src/tui.js';
 import { loadConfig, setModel, setApiKey } from '../src/config.js';
 import { runProjectTest } from '../src/test.js';
+
 
 dotenv.config();
 
@@ -34,7 +60,7 @@ const cfgDefaults = loadConfig();
 
 program
   .name('qlood')
-  .description('AI-powered testing CLI for your web app. Initializes ./qlood and drives Chromium to find bugs.')
+  .description('AI-powered testing CLI for your web app. Initializes ./.qlood and drives Chromium to find bugs.')
   .version('0.1.0');
 
 program.option('--headless', 'Run headless Chromium', false);

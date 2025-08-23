@@ -1,7 +1,7 @@
 {
   "name": "qlood-cli",
-  "version": "0.1.5",
-  "description": "Open-source CLI that initializes ./qlood in your project and uses AI-driven browser automation to test your web app.",
+  "version": "0.1.6",
+  "description": "Open-source CLI that initializes ./.qlood in your project and uses AI-driven browser automation to test your web app.",
   "bin": {
     "qlood": "bin/qlood.js"
   },
@@ -13,7 +13,8 @@
     "start": "node bin/qlood.js",
     "dev": "node --enable-source-maps bin/qlood.js --help",
     "lint": "eslint .",
-    "test": "node --version && echo 'Tests TBD'"
+    "test": "node --version && echo 'Tests TBD'",
+    "qlood": "qlood"
   },
   "keywords": [
     "cli",

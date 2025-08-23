@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 export function getProjectDir(cwd = process.cwd()) {
-  return path.join(cwd, 'qlood'); // project-local folder ./qlood
+  return path.join(cwd, '.qlood'); // project-local folder ./.qlood
 }
 
 export function ensureProjectDirs(cwd = process.cwd()) {
