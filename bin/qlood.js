@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import dotenv from 'dotenv';
-import { createChrome, withPage, listPages, newTab, switchToTab, screenshot, cancelCurrentAction } from '../src/chrome.js';
+import { createChrome, withPage, screenshot, cancelCurrentAction } from '../src/chrome.js';
 import { clickCmd, typeCmd, gotoCmd, openCmd } from '../src/commands.js';
-import { copyText, pasteText } from '../src/clipboard.js';
 import { runAgent } from '../src/agent.js';
 import { runTui } from '../src/tui.js';
 import { loadConfig, setModel, setApiKey } from '../src/config.js';
+import { runProjectTest } from '../src/test.js';
 
 dotenv.config();
 
@@ -34,7 +34,7 @@ const cfgDefaults = loadConfig();
 
 program
   .name('qlood')
-  .description('Automate Chrome via CDP with LLM agent (OpenRouter)')
+  .description('AI-powered testing CLI for your web app. Initializes ./qlood and drives Chromium to find bugs.')
   .version('0.1.0');
 
 program.option('--headless', 'Run headless Chromium', false);
@@ -81,27 +81,6 @@ program
     await withPage(async (page) => typeCmd(page, selector, text));
   });
 
-const tabs = program.command('tabs').description('Manage tabs');
-
-tabs.command('new').description('Open new tab').action(async () => {
-  const opts = program.opts();
-  await createChrome({ headless: !!opts.headless, debug: !!opts.debug });
-  await newTab();
-});
-
-tabs.command('list').description('List tabs').action(async () => {
-  const opts = program.opts();
-  await createChrome({ headless: !!opts.headless, debug: !!opts.debug });
-  const pages = await listPages();
-  pages.forEach((p, i) => console.log(`${i}: ${p.url()}`));
-});
-
-tabs.command('switch').argument('<index>').description('Switch to tab by index').action(async (index) => {
-  const opts = program.opts();
-  await createChrome({ headless: !!opts.headless, debug: !!opts.debug });
-  await switchToTab(Number(index));
-});
-
 program
   .command('screenshot')
   .argument('[path]', 'file path', 'screenshot.png')
@@ -111,13 +90,6 @@ program
     await createChrome({ headless: !!opts.headless, debug: !!opts.debug });
     await withPage(async (page) => screenshot(page, path));
   });
-
-const cb = program.command('clipboard').description('Clipboard utilities');
-cb.command('copy').argument('<text>').action(async (text) => copyText(text));
-cb.command('paste').action(async () => {
-  const text = await pasteText();
-  process.stdout.write(text + '\n');
-});
 
 program
   .command('agent')
@@ -146,6 +118,17 @@ program
   .description('Start interactive TUI')
   .action(async () => {
     await runTui();
+  });
+
+// Project commands
+program
+  .command('test')
+  .argument('<scenario...>')
+  .description('Run an AI-driven test scenario against your local app')
+  .action(async (scenarioParts) => {
+    const opts = program.opts();
+    const scenario = Array.isArray(scenarioParts) ? scenarioParts.join(' ') : String(scenarioParts);
+    await runProjectTest(scenario, { headless: !!opts.headless, debug: !!opts.debug });
   });
 
 if (process.argv.length <= 2) {

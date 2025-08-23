@@ -3,6 +3,8 @@ import { loadConfig, setModel, setApiKey, getApiKey, getModel } from './config.j
 import { openCmd, gotoCmd, clickCmd, typeCmd } from './commands.js';
 import { withPage, createChrome, cancelCurrentAction } from './chrome.js';
 import { runAgent, cancelAgentRun } from './agent.js';
+import { ensureProjectInit, loadProjectConfig } from './project.js';
+import { runProjectTest } from './test.js';
 
 export async function runTui() {
   // Do NOT auto-launch Chrome here; lazily start on first browser command.
@@ -89,9 +91,9 @@ export async function runTui() {
     const keyState = k ? '{green-fg}API key ✓{/}' : '{red-fg}API key ✗{/}';
     const state = working ? `{cyan-fg}${spinnerFrames[spinnerIndex]} Working...{/}` : '{gray-fg}Idle{/}';
     header.setContent(
-      '{bold}{cyan-fg} qlood {/} {gray-fg}TUI{/}\n' +
+      '{bold}{cyan-fg} qlood {/} {gray-fg}Test Runner TUI{/}\n' +
       ` ${state}   {blue-fg}Model:{/} ${model}   ${keyState}\n` +
-      ' {gray-fg}Enter free text to run the agent. Type {/}{bold}/help{/}{gray-fg} for commands.{/}'
+      ' {gray-fg}Use {/}{bold}/test <goal>{/}{gray-fg}, or enter free text to drive the agent.{/}'
     );
   }
 
@@ -136,7 +138,17 @@ export async function runTui() {
   if (!apiKey) addLog('{yellow-fg}No API key found. Use{/} {bold}/key <your-key>{/} {yellow-fg}to set it.{/}');
   else addLog('{green-fg}API key configured{/}');
   addLog('Type {bold}/help{/} for available commands.');
-  addLog('Tip: enter free text (no /) to run the AI agent.');
+  addLog('Tip: /test runs an AI test. If not initialized, we will prompt you.');
+
+  // If project isn't initialized, prompt to initialize
+  let expectingInitConfirm = false;
+  const projectCfg = loadProjectConfig(process.cwd());
+  if (!projectCfg) {
+    expectingInitConfirm = true;
+    addLog('{yellow-fg}This project is not initialized for qlood.{/}');
+    addLog('We can create ./qlood, scan your project to set sensible defaults (URL, start command), and add a basic workflow.');
+    addLog('Initialize now? {bold}y{/}/n');
+  }
 
   function renderStatus() {
     statusBar.setContent('{gray-fg}Keys: Enter run  •  Up/Down history  •  Ctrl+C cancel  •  q quit{/}');
@@ -160,6 +172,24 @@ export async function runTui() {
     histIndex = history.length;
 
     try {
+      if (expectingInitConfirm) {
+        const ans = cmd.toLowerCase();
+        if (ans === 'y' || ans === 'yes') {
+          ensureProjectInit({});
+          const cfg = loadProjectConfig(process.cwd());
+          addLog(`{green-fg}Initialized ./qlood{/} (url: ${cfg?.devServer?.url || 'n/a'}, start: ${cfg?.devServer?.start || 'n/a'})`);
+          expectingInitConfirm = false;
+          return;
+        } else if (ans === 'n' || ans === 'no') {
+          addLog('{red-fg}Initialization declined. Exiting qlood...{/}');
+          // small delay to allow user to read
+          setTimeout(() => { screen.destroy(); process.exit(0); }, 300);
+          return;
+        } else {
+          addLog('Please answer with y or n.');
+          return;
+        }
+      }
       if (cmd.startsWith('/model ')) {
         const m = cmd.replace('/model ', '').trim();
         if (!m) return addLog('Usage: /model <id>');
@@ -206,6 +236,7 @@ export async function runTui() {
         addLog('  {cyan-fg}/click <selector>{/}');
         addLog('  {cyan-fg}/type <selector> <text>{/}');
         addLog('  {cyan-fg}/tools{/}');
+        addLog('  {cyan-fg}/test <scenario>{/}');
         addLog('  {cyan-fg}/quit{/}');
         addLog('');
         addLog('Free text (no /): run the AI agent with your request.');
@@ -219,6 +250,18 @@ export async function runTui() {
         addLog('  {blue-fg}pressEnter{/}(): Press Enter key');
         addLog('  {blue-fg}screenshot{/}(path?): Save screenshot (default screenshot.png)');
         addLog('  {blue-fg}scroll{/}(y): Scroll by y pixels (positive=down)');
+      } else if (cmd.startsWith('/test ')) {
+        const scenario = cmd.replace('/test ', '').trim();
+        if (!scenario) return addLog('Usage: /test <scenario>');
+        showWorking();
+        try {
+          await runProjectTest(scenario, { debug: true, onLog: (m) => addLog(m) });
+          addLog('{green-fg}Test completed{/}');
+        } catch (e) {
+          addLog(`{red-fg}Test error:{/} ${e?.message || e}`);
+        } finally {
+          hideWorking();
+        }
       } else if (cmd === '/quit') {
         screen.destroy();
         process.exit(0);

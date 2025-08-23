@@ -1,7 +1,7 @@
 {
   "name": "qlood-cli",
   "version": "0.1.4",
-  "description": "CLI to automate Chrome via CDP with LLM agent using OpenRouter.",
+  "description": "Open-source CLI that initializes ./qlood in your project and uses AI-driven browser automation to test your web app.",
   "bin": {
     "qlood": "bin/qlood.js"
   },
@@ -17,12 +17,15 @@
   },
   "keywords": [
     "cli",
-    "chrome",
-    "cdp",
-    "puppeteer",
-    "openrouter",
+    "testing",
+    "web",
     "automation",
-    "llm"
+    "chromium",
+    "puppeteer",
+    "cdp",
+    "openrouter",
+    "llm",
+    "qa"
   ],
   "author": "",
   "license": "MIT",

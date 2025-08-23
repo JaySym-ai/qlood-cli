@@ -310,8 +310,8 @@ Respond ONLY with a single JSON object representing a tool call. Accepted shapes
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
         'Authorization': `Bearer ${sanitizedApiKey}`,
-        'HTTP-Referer': 'https://github.com/owner/repo',
-        'X-Title': 'qlood-cli agent'
+        'HTTP-Referer': 'https://github.com/qloodhq/qlood-cli',
+        'X-Title': 'qlood-cli'
       },
       body: bodyString,
       signal: controller.signal,
