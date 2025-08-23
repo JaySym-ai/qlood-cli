@@ -1,5 +1,7 @@
 import { ensurePage, getBrowser, createChrome, screenshot as takeScreenshot } from './chrome.js';
 import { gotoCmd, clickCmd, typeCmd } from './commands.js';
+import { cliExecutor } from './cli-executor.js';
+import { debugLogger } from './debug.js';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -11,7 +13,7 @@ export function cancelAgentRun() {
 
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { getApiKey, getModel, setApiKey } from './config.js';
+import { getApiKey, getModel, setApiKey, getMainPrompt, getSystemInstructions } from './config.js';
 
 // Tool registry with schemas and handlers
 const toolRegistry = {
@@ -23,7 +25,18 @@ const toolRegistry = {
       required: ['url'],
       additionalProperties: false,
     },
-    handler: async (page, args) => gotoCmd(page, String(args.url), { silent: true }),
+    handler: async (page, args) => {
+      const startTime = new Date();
+      debugLogger.logToolExecution('goto', args, startTime);
+      try {
+        const result = await gotoCmd(page, String(args.url), { silent: true });
+        debugLogger.logToolResult('goto', { url: args.url }, startTime);
+        return result;
+      } catch (error) {
+        debugLogger.logToolResult('goto', null, startTime, error);
+        throw error;
+      }
+    },
   },
   click: {
     description: 'Click a CSS selector',
@@ -33,7 +46,18 @@ const toolRegistry = {
       required: ['selector'],
       additionalProperties: false,
     },
-    handler: async (page, args) => clickCmd(page, String(args.selector), { silent: true }),
+    handler: async (page, args) => {
+      const startTime = new Date();
+      debugLogger.logToolExecution('click', args, startTime);
+      try {
+        const result = await clickCmd(page, String(args.selector), { silent: true });
+        debugLogger.logToolResult('click', { selector: args.selector }, startTime);
+        return result;
+      } catch (error) {
+        debugLogger.logToolResult('click', null, startTime, error);
+        throw error;
+      }
+    },
   },
   type: {
     description: 'Type text into a CSS selector',
@@ -43,7 +67,18 @@ const toolRegistry = {
       required: ['selector', 'text'],
       additionalProperties: false,
     },
-    handler: async (page, args) => typeCmd(page, String(args.selector), String(args.text), { silent: true }),
+    handler: async (page, args) => {
+      const startTime = new Date();
+      debugLogger.logToolExecution('type', args, startTime);
+      try {
+        const result = await typeCmd(page, String(args.selector), String(args.text), { silent: true });
+        debugLogger.logToolResult('type', { selector: args.selector, text: args.text }, startTime);
+        return result;
+      } catch (error) {
+        debugLogger.logToolResult('type', null, startTime, error);
+        throw error;
+      }
+    },
   },
   screenshot: {
     description: 'Save a full-page screenshot to optional path',
@@ -53,7 +88,19 @@ const toolRegistry = {
       required: [],
       additionalProperties: false,
     },
-    handler: async (page, args) => takeScreenshot(page, args?.path || 'screenshot.png'),
+    handler: async (page, args) => {
+      const startTime = new Date();
+      const path = args?.path || 'screenshot.png';
+      debugLogger.logToolExecution('screenshot', { path }, startTime);
+      try {
+        const result = await takeScreenshot(page, path);
+        debugLogger.logToolResult('screenshot', { path }, startTime);
+        return result;
+      } catch (error) {
+        debugLogger.logToolResult('screenshot', null, startTime, error);
+        throw error;
+      }
+    },
   },
   scroll: {
     description: 'Scroll vertically by pixels (positive=down, negative=up)',
@@ -63,7 +110,19 @@ const toolRegistry = {
       required: ['y'],
       additionalProperties: false,
     },
-    handler: async (page, args) => page.evaluate((dy) => window.scrollBy(0, dy), Number(args.y || 0)),
+    handler: async (page, args) => {
+      const startTime = new Date();
+      const y = Number(args.y || 0);
+      debugLogger.logToolExecution('scroll', { y }, startTime);
+      try {
+        const result = await page.evaluate((dy) => window.scrollBy(0, dy), y);
+        debugLogger.logToolResult('scroll', { y }, startTime);
+        return result;
+      } catch (error) {
+        debugLogger.logToolResult('scroll', null, startTime, error);
+        throw error;
+      }
+    },
   },
   pressEnter: {
     description: 'Press Enter key on the currently focused element',
@@ -73,7 +132,18 @@ const toolRegistry = {
       required: [],
       additionalProperties: false,
     },
-    handler: async (page) => page.keyboard.press('Enter'),
+    handler: async (page) => {
+      const startTime = new Date();
+      debugLogger.logToolExecution('pressEnter', {}, startTime);
+      try {
+        const result = await page.keyboard.press('Enter');
+        debugLogger.logToolResult('pressEnter', {}, startTime);
+        return result;
+      } catch (error) {
+        debugLogger.logToolResult('pressEnter', null, startTime, error);
+        throw error;
+      }
+    },
   },
   search: {
     description: 'Type search query and submit (combines typing + enter)',
@@ -87,8 +157,11 @@ const toolRegistry = {
       additionalProperties: false,
     },
     handler: async (page, args) => {
+      const startTime = new Date();
       const selector = String(args.selector);
       const text = String(args.query);
+      debugLogger.logToolExecution('search', { selector, query: text }, startTime);
+      
       try {
         // Prefer a visible element when waiting
         await page.waitForSelector(selector, { timeout: 10000, visible: true });
@@ -142,7 +215,10 @@ const toolRegistry = {
 
         // Submit via Enter. If a surrounding form exists, Enter will submit it.
         await page.keyboard.press('Enter');
+        
+        debugLogger.logToolResult('search', { selector, query: text }, startTime);
       } catch (error) {
+        debugLogger.logToolResult('search', null, startTime, error);
         if (error.message.includes('detached')) {
           throw new Error(`Search failed - page detached: ${selector}`);
         }
@@ -158,7 +234,134 @@ const toolRegistry = {
       required: ['result'],
       additionalProperties: false,
     },
-    handler: async (_page, _args) => {},
+    handler: async (_page, args) => {
+      const startTime = new Date();
+      debugLogger.logToolExecution('done', args, startTime);
+      debugLogger.logToolResult('done', args, startTime);
+    },
+  },
+  cli: {
+    description: 'Execute CLI commands on the system',
+    schema: {
+      type: 'object',
+      properties: { 
+        command: { type: 'string', description: 'The command to execute' },
+        args: { type: 'array', items: { type: 'string' }, description: 'Command arguments' },
+        background: { type: 'boolean', description: 'Run in background (default: false)' },
+        timeout: { type: 'number', description: 'Timeout in milliseconds (default: 30000)' },
+        cwd: { type: 'string', description: 'Working directory (default: current)' }
+      },
+      required: ['command'],
+      additionalProperties: false,
+    },
+    handler: async (_page, args) => {
+      const startTime = new Date();
+      const { command, args: cmdArgs = [], background = false, timeout = 30000, cwd } = args;
+      
+      debugLogger.logToolExecution('cli', { command, args: cmdArgs, background, timeout, cwd }, startTime);
+      
+      try {
+        const result = await cliExecutor.executeCommand(command, {
+          args: cmdArgs,
+          background,
+          timeout,
+          cwd
+        });
+        
+        const toolResult = {
+          success: result.success,
+          output: result.stdout || result.message || '',
+          error: result.stderr || '',
+          exitCode: result.exitCode,
+          processId: result.processId
+        };
+        
+        debugLogger.logToolResult('cli', toolResult, startTime);
+        return toolResult;
+      } catch (error) {
+        const toolResult = {
+          success: false,
+          error: error.message,
+          exitCode: 1
+        };
+        debugLogger.logToolResult('cli', null, startTime, error);
+        return toolResult;
+      }
+    },
+  },
+  cliHelp: {
+    description: 'Get help information for CLI commands',
+    schema: {
+      type: 'object',
+      properties: { 
+        command: { type: 'string', description: 'The command to get help for' }
+      },
+      required: ['command'],
+      additionalProperties: false,
+    },
+    handler: async (_page, args) => {
+      const startTime = new Date();
+      const { command } = args;
+      
+      debugLogger.logToolExecution('cliHelp', { command }, startTime);
+      
+      try {
+        const result = await cliExecutor.getCommandHelp(command);
+        debugLogger.logToolResult('cliHelp', result, startTime);
+        return result;
+      } catch (error) {
+        const errorResult = {
+          success: false,
+          message: error.message
+        };
+        debugLogger.logToolResult('cliHelp', null, startTime, error);
+        return errorResult;
+      }
+    },
+  },
+  cliList: {
+    description: 'List running background processes',
+    schema: {
+      type: 'object',
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+    handler: async (_page, _args) => {
+      const startTime = new Date();
+      debugLogger.logToolExecution('cliList', {}, startTime);
+      
+      const processes = cliExecutor.listProcesses();
+      const result = {
+        success: true,
+        processes
+      };
+      
+      debugLogger.logToolResult('cliList', result, startTime);
+      return result;
+    },
+  },
+  cliKill: {
+    description: 'Kill a background process by ID',
+    schema: {
+      type: 'object',
+      properties: { 
+        processId: { type: 'number', description: 'Process ID to kill' }
+      },
+      required: ['processId'],
+      additionalProperties: false,
+    },
+    handler: async (_page, args) => {
+      const startTime = new Date();
+      const { processId } = args;
+      
+      debugLogger.logToolExecution('cliKill', { processId }, startTime);
+      
+      const result = cliExecutor.killProcess(processId);
+      debugLogger.logToolResult('cliKill', result, startTime);
+      
+      return result;
+    },
   },
 };
 
@@ -206,7 +409,7 @@ function coercePlanShape(obj) {
   return null;
 }
 
-export async function runAgent(goal, { model, headless = false, debug = false, promptForApiKey = true, onLog } = {}) {
+export async function runAgent(goal, { headless = false, debug = false, promptForApiKey = true, onLog } = {}) {
   // Sanitize the goal to prevent Unicode issues
   const sanitizedGoal = goal
     .replace(/[\u{10000}-\u{10FFFF}]/gu, '?')
@@ -230,7 +433,7 @@ export async function runAgent(goal, { model, headless = false, debug = false, p
       throw new Error('OpenRouter API key missing');
     }
   }
-  const effectiveModel = model || getModel();
+  const effectiveModel = getModel();
 
   const tools = toolsForPrompt();
 
@@ -247,6 +450,7 @@ export async function runAgent(goal, { model, headless = false, debug = false, p
         const title = await page.title();
         const url = page.url();
         context = `Current page: ${title}\nURL: ${url}`;
+        debugLogger.logPageState(page);
       } catch (error) {
         if (error.message.includes('detached')) {
           context = 'Page detached - will reconnect on next action';
@@ -255,6 +459,7 @@ export async function runAgent(goal, { model, headless = false, debug = false, p
           context = 'Page error - will reconnect';
           page = null;
         }
+        debugLogger.logError('Page context check', error);
       }
     }
     
@@ -262,14 +467,32 @@ export async function runAgent(goal, { model, headless = false, debug = false, p
       ? `\nRecent actions:\n${actionHistory.slice(-3).map((h, i) => `${actionHistory.length - 3 + i + 1}. ${h}`).join('\n')}`
       : '';
     
-    const prompt = `Goal: ${sanitizedGoal}\nYou have tools (name, description, JSON schema parameters):\n${JSON.stringify(tools, null, 2)}\nState:\n${context}${historyText}\n\nIMPORTANT: 
+    const mainPrompt = getMainPrompt();
+    const systemInstructions = getSystemInstructions();
+    const additionalInstructions = systemInstructions ? `\n\nAdditional Instructions:\n${systemInstructions}` : '';
+    
+    const prompt = `${mainPrompt}
+
+Goal: ${sanitizedGoal}
+You have tools (name, description, JSON schema parameters):
+${JSON.stringify(tools, null, 2)}
+
+State:
+${context}${historyText}
+
+IMPORTANT: 
 - Don't repeat the same action
 - For searches, use the 'search' tool instead of separate type+click
 - If you just typed text, try pressEnter() or click a submit button
 - If the goal seems achieved, use the 'done' tool
 - Be efficient - combine actions when possible
+- You can use 'cli' tool to execute system commands when needed
+- Use 'cliHelp' to get help for unfamiliar commands${additionalInstructions}
 
-Respond ONLY with a single JSON object representing a tool call. Accepted shapes:\n- {"tool": "name", "args": { ... }}\n- {"function_call": {"name": "name", "arguments": "{...json...}"}}\n- {"functionCall": {"name": "name", "args": { ... }}}`;
+Respond ONLY with a single JSON object representing a tool call. Accepted shapes:
+- {"tool": "name", "args": { ... }}
+- {"function_call": {"name": "name", "arguments": "{...json...}"}}
+- {"functionCall": {"name": "name", "args": { ... }}}`;
 
     // Sanitize the prompt to prevent Unicode issues
     const sanitizedPrompt = prompt
@@ -281,10 +504,12 @@ Respond ONLY with a single JSON object representing a tool call. Accepted shapes
     const body = {
       model: effectiveModel,
       messages: [
-        { role: 'system', content: 'You are a web automation planner. Only output tool calls as JSON.' },
+        { role: 'system', content: 'You are an AI assistant capable of web automation and CLI execution. Only output tool calls as JSON.' },
         { role: 'user', content: sanitizedPrompt }
       ]
     };
+
+    debugLogger.logAgentRequest(sanitizedGoal, effectiveModel, sanitizedPrompt, tools);
 
     const bodyString = JSON.stringify(body);
     if (debug && onLog) {
@@ -318,7 +543,12 @@ Respond ONLY with a single JSON object representing a tool call. Accepted shapes
     });
     currentAbortController = null;
 
-    if (!resp.ok) throw new Error(`OpenRouter error: ${resp.status}`);
+    if (!resp.ok) {
+      const error = new Error(`OpenRouter error: ${resp.status}`);
+      debugLogger.logError('OpenRouter API', error);
+      throw error;
+    }
+    
     const data = await resp.json();
     const rawContent = data.choices?.[0]?.message?.content || '';
     const content = rawContent
@@ -330,9 +560,24 @@ Respond ONLY with a single JSON object representing a tool call. Accepted shapes
     }
 
     let plan = parseMaybeJson(content);
-    if (!plan) { if (onLog) onLog('Model did not return JSON; stopping.'); else console.log('Model did not return JSON; stopping.'); break; }
+    
+    debugLogger.logAgentResponse(content, plan);
+    
+    if (!plan) { 
+      const msg = 'Model did not return JSON; stopping.';
+      debugLogger.logError('Agent parsing', new Error(msg));
+      if (onLog) onLog(msg); else console.log(msg); 
+      break; 
+    }
+    
     const coerced = coercePlanShape(plan);
-    if (!coerced) { if (onLog) onLog('Could not interpret tool call; stopping.'); else console.log('Could not interpret tool call; stopping.'); break; }
+    if (!coerced) { 
+      const msg = 'Could not interpret tool call; stopping.';
+      debugLogger.logError('Agent parsing', new Error(msg));
+      if (onLog) onLog(msg); else console.log(msg); 
+      break; 
+    }
+    
     const { tool, args } = coerced;
   async function ensureAgentPage() {
     try { await getBrowser(); } catch { await createChrome({ headless, debug }); }
@@ -373,6 +618,10 @@ Respond ONLY with a single JSON object representing a tool call. Accepted shapes
                      tool === 'screenshot' ? `took screenshot` :
                      tool === 'pressEnter' ? `pressed Enter key` :
                      tool === 'search' ? `searched for "${args?.query}" in ${args?.selector}` :
+                     tool === 'cli' ? `executed CLI: ${args?.command} ${args?.args?.join(' ') || ''}` :
+                     tool === 'cliHelp' ? `got help for CLI: ${args?.command}` :
+                     tool === 'cliList' ? `listed background processes` :
+                     tool === 'cliKill' ? `killed process ${args?.processId}` :
                      `performed ${tool}`;
   actionHistory.push(actionDesc);
   }

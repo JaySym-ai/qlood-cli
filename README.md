@@ -37,7 +37,7 @@ Core testing commands
 Global options
 - `--headless`                        Run headless Chromium
 - `--debug`                           Visible browser with slowMo for steps
-- `--model <id>`                      OpenRouter model for AI (default: moonshotai/kimi-k2)
+
 
 Examples
 - `qlood test "Create an account, log out, log back in" --debug`
@@ -62,7 +62,7 @@ Artifacts
 
 Interactive TUI
 - `qlood` or `qlood tui`              Launches the TUI (prompts to init if needed)
-- Slash commands: `/test <scenario>`, `/model <id>`, `/key <apiKey>`, `/open <url>`, `/goto <url>`, `/click <selector>`, `/type <selector> <text>`, `/tools`, `/quit`
+- Slash commands: `/test <scenario>`, `/key <apiKey>`, `/open <url>`, `/goto <url>`, `/click <selector>`, `/type <selector> <text>`, `/tools`, `/quit`
 - Free text: type natural language without `/` to drive the AI agent
 - Ctrl+C: first press cancels current action, second within 1.5s exits
 
@@ -75,7 +75,7 @@ Low-level browser commands (optional)
 
 ### Environment
 - `OPENROUTER_API_KEY`: your OpenRouter API key
-- Optional: `QLOOD_DEFAULT_MODEL` (e.g., `anthropic/claude-3.5-sonnet`)
+
 
 Security note
 - Prefer setting your API key via the TUI (`/key <apiKey>`) to avoid shell history capturing secrets.

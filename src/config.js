@@ -24,12 +24,6 @@ export function saveConfig(cfg) {
   try { fs.chmodSync(p, 0o600); } catch {}
 }
 
-export function setModel(model) {
-  const cfg = loadConfig();
-  cfg.model = model;
-  saveConfig(cfg);
-}
-
 export function setApiKey(key) {
   const cfg = loadConfig();
   // Sanitize API key to prevent Unicode corruption
@@ -38,11 +32,32 @@ export function setApiKey(key) {
 }
 
 export function getModel() {
-  const cfg = loadConfig();
-  return cfg.model || process.env.QLOOD_DEFAULT_MODEL || 'moonshotai/kimi-k2';
+  return 'google/gemini-2.0-flash-001';
 }
 
 export function getApiKey() {
   const cfg = loadConfig();
   return process.env.OPENROUTER_API_KEY || cfg.apiKey;
+}
+
+export function setMainPrompt(prompt) {
+  const cfg = loadConfig();
+  cfg.mainPrompt = prompt;
+  saveConfig(cfg);
+}
+
+export function getMainPrompt() {
+  const cfg = loadConfig();
+  return cfg.mainPrompt || 'You are a helpful AI assistant that can control web browsers and execute CLI commands to help users accomplish their goals.';
+}
+
+export function setSystemInstructions(instructions) {
+  const cfg = loadConfig();
+  cfg.systemInstructions = instructions;
+  saveConfig(cfg);
+}
+
+export function getSystemInstructions() {
+  const cfg = loadConfig();
+  return cfg.systemInstructions || '';
 }

@@ -1,9 +1,10 @@
 import blessed from 'blessed';
 import fs from 'fs';
-import { loadConfig, setModel, setApiKey, getApiKey, getModel } from './config.js';
+import { loadConfig, setApiKey, getApiKey, setMainPrompt, setSystemInstructions, getMainPrompt, getSystemInstructions } from './config.js';
 import { openCmd, gotoCmd, clickCmd, typeCmd } from './commands.js';
 import { withPage, createChrome, cancelCurrentAction } from './chrome.js';
 import { runAgent, cancelAgentRun } from './agent.js';
+import { debugLogger } from './debug.js';
 import { ensureProjectInit, loadProjectConfig, getProjectStructurePath, saveProjectStructure, scanProject } from './project.js';
 import { runProjectTest } from './test.js';
 
@@ -87,13 +88,12 @@ export async function runTui() {
   let working = false;
   
   function renderHeader() {
-    const model = getModel();
     const k = getApiKey();
     const keyState = k ? '{green-fg}API key ✓{/}' : '{red-fg}API key ✗{/}';
     const state = working ? `{cyan-fg}${spinnerFrames[spinnerIndex]} Working...{/}` : '{gray-fg}Idle{/}';
     header.setContent(
       '{bold}{cyan-fg} qlood {/} {gray-fg}Test Runner TUI{/}\n' +
-      ` ${state}   {blue-fg}Model:{/} ${model}   ${keyState}\n` +
+      ` ${state}   ${keyState}\n` +
       ' {gray-fg}Use {/}{bold}/test <goal>{/}{gray-fg}, or enter free text to drive the agent.{/}'
     );
   }
@@ -102,6 +102,10 @@ export async function runTui() {
     log.add(message);
     log.setScrollPerc(100);
     screen.render();
+    
+    // Log system output for debug (strip color codes for cleaner log)
+    const cleanMessage = message.replace(/\{[^}]*\}/g, '');
+    debugLogger.logSystemOutput(cleanMessage, 'info');
   }
 
   function showWorking() {
@@ -134,7 +138,6 @@ export async function runTui() {
 
   addLog('{bold}Welcome to qlood TUI{/}');
   loadConfig();
-  addLog(`Model: {blue-fg}${getModel()}{/}`);
   const apiKey = getApiKey();
   if (!apiKey) addLog('{yellow-fg}No API key found. Use{/} {bold}/key <your-key>{/} {yellow-fg}to set it.{/}');
   else addLog('{green-fg}API key configured{/}');
@@ -183,6 +186,9 @@ export async function runTui() {
     if (!cmd) return;
     history.push(cmd);
     histIndex = history.length;
+    
+    // Log user input for debug
+    debugLogger.logUserInput(cmd, 'TUI');
 
     try {
       if (expectingInitConfirm) {
@@ -222,16 +228,44 @@ export async function runTui() {
           return;
         }
       }
-      if (cmd.startsWith('/model ')) {
-        const m = cmd.replace('/model ', '').trim();
-        if (!m) return addLog('Usage: /model <id>');
-        setModel(m);
-        addLog(`Model set to ${m}`);
-      } else if (cmd.startsWith('/key ')) {
+      if (cmd.startsWith('/key ')) {
         const k = cmd.replace('/key ', '').trim();
         if (!k) return addLog('Usage: /key <apiKey>');
         setApiKey(k);
         addLog('API key updated');
+      } else if (cmd.startsWith('/prompt ')) {
+        const p = cmd.replace('/prompt ', '').trim();
+        if (!p) return addLog('Usage: /prompt <main prompt>');
+        setMainPrompt(p);
+        addLog('Main prompt updated');
+      } else if (cmd.startsWith('/instructions ')) {
+        const i = cmd.replace('/instructions ', '').trim();
+        if (!i) return addLog('Usage: /instructions <system instructions>');
+        setSystemInstructions(i);
+        addLog('System instructions updated');
+      } else if (cmd === '/debug') {
+        if (debugLogger.isEnabled()) {
+          const info = debugLogger.getSessionInfo();
+          addLog(`{yellow-fg}Debug already enabled{/} (Session: ${info.sessionId})`);
+          addLog(`Debug file: {blue-fg}${info.debugFile}{/}`);
+          addLog(`Steps logged: {cyan-fg}${info.stepCounter}{/}`);
+          addLog('Use {bold}/debug off{/} to disable.');
+        } else {
+          debugLogger.enable(process.cwd());
+          addLog('{green-fg}Debug mode enabled!{/}');
+          addLog(`Debug logs will be saved to {blue-fg}./.qlood/debug/{/}`);
+          addLog('All tool calls and AI requests will be logged.');
+          addLog('Use {bold}/debug off{/} to disable.');
+        }
+      } else if (cmd === '/debug off') {
+        if (debugLogger.isEnabled()) {
+          const debugFile = debugLogger.getDebugFile();
+          debugLogger.disable();
+          addLog('{yellow-fg}Debug mode disabled.{/}');
+          addLog(`Final debug log: {blue-fg}${debugFile}{/}`);
+        } else {
+          addLog('{yellow-fg}Debug mode is not enabled.{/}');
+        }
       } else if (cmd.startsWith('/open ')) {
         const url = cmd.replace('/open ', '').trim();
         if (!url) return addLog('Usage: /open <url>');
@@ -261,8 +295,10 @@ export async function runTui() {
         addLog(`Typed into ${sel}`);
       } else if (cmd === '/help') {
         addLog('{bold}Commands:{/}');
-        addLog('  {cyan-fg}/model <id>{/}');
         addLog('  {cyan-fg}/key <apiKey>{/}');
+        addLog('  {cyan-fg}/prompt <main prompt>{/}');
+        addLog('  {cyan-fg}/instructions <system instructions>{/}');
+        addLog('  {cyan-fg}/debug{/} / {cyan-fg}/debug off{/}');
         addLog('  {cyan-fg}/open <url>{/}');
         addLog('  {cyan-fg}/goto <url>{/}');
         addLog('  {cyan-fg}/click <selector>{/}');
@@ -272,7 +308,7 @@ export async function runTui() {
         addLog('  {cyan-fg}/quit{/}');
         addLog('');
         addLog('Free text (no /): run the AI agent with your request.');
-        addLog('{gray-fg}Agent tools:{/} {blue-fg}goto{/}(url), {blue-fg}click{/}(selector), {blue-fg}type{/}(selector,text), {blue-fg}search{/}(selector,query), {blue-fg}pressEnter{/}(), {blue-fg}screenshot{/}(path?), {blue-fg}scroll{/}(y), {blue-fg}done{/}(result)');
+        addLog('{gray-fg}Agent tools:{/} {blue-fg}goto{/}(url), {blue-fg}click{/}(selector), {blue-fg}type{/}(selector,text), {blue-fg}search{/}(selector,query), {blue-fg}pressEnter{/}(), {blue-fg}screenshot{/}(path?), {blue-fg}scroll{/}(y), {blue-fg}cli{/}(command), {blue-fg}done{/}(result)');
       } else if (cmd === '/tools') {
         addLog('Available tools:');
         addLog('  {blue-fg}goto{/}(url): Navigate to URL');
@@ -282,6 +318,10 @@ export async function runTui() {
         addLog('  {blue-fg}pressEnter{/}(): Press Enter key');
         addLog('  {blue-fg}screenshot{/}(path?): Save screenshot (default screenshot.png)');
         addLog('  {blue-fg}scroll{/}(y): Scroll by y pixels (positive=down)');
+        addLog('  {blue-fg}cli{/}(command, args?, options?): Execute CLI commands');
+        addLog('  {blue-fg}cliHelp{/}(command): Get help for CLI commands');
+        addLog('  {blue-fg}cliList{/}(): List running background processes');
+        addLog('  {blue-fg}cliKill{/}(processId): Kill background process');
       } else if (cmd.startsWith('/test ')) {
         const scenario = cmd.replace('/test ', '').trim();
         if (!scenario) return addLog('Usage: /test <scenario>');
@@ -302,12 +342,11 @@ export async function runTui() {
         function sanitizeGoal(text) {
           // Replace problematic Unicode chars that can cause ByteString issues
           return text
-            .replace(/[�]/g, '?')  // replacement characters
-            .replace(/[ --]/g, ' ')  // control chars
-            .replace(/[က0-က00]/gu, '?')  // 4-byte Unicode
-            .replace(/[^ -ÿ]/g, '?')  // non-Latin-1 characters
+            .replace(/[]/g, '?')  // replacement characters
+            .replace(/[\u0000-\u001f]/g, ' ')  // control chars
+            .replace(/[\u0080-\u00ff]/g, '?')  // non-Latin-1 characters
             .normalize('NFD')  // decompose Unicode
-            .replace(/[̀-ͯ]/g, '');  // remove combining marks
+            .replace(/[\u0300-\u036f]/g, '');  // remove combining marks
         }
         // Sanitize the goal upfront to prevent encoding issues
         const sanitizedCmd = sanitizeGoal(cmd);

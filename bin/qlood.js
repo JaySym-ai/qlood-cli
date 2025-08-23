@@ -30,8 +30,9 @@ import { createChrome, withPage, screenshot, cancelCurrentAction } from '../src/
 import { clickCmd, typeCmd, gotoCmd, openCmd } from '../src/commands.js';
 import { runAgent } from '../src/agent.js';
 import { runTui } from '../src/tui.js';
-import { loadConfig, setModel, setApiKey } from '../src/config.js';
+import { loadConfig, setApiKey, setMainPrompt, setSystemInstructions } from '../src/config.js';
 import { runProjectTest } from '../src/test.js';
+import { debugLogger } from '../src/debug.js';
 
 
 dotenv.config();
@@ -65,7 +66,7 @@ program
 
 program.option('--headless', 'Run headless Chromium', false);
 program.option('--debug', 'Run with visible browser and devtools', false);
-program.option('--model <id>', 'OpenRouter model id', cfgDefaults.model || process.env.QLOOD_DEFAULT_MODEL || 'moonshotai/kimi-k2');
+
 
 program
   .command('open')
@@ -129,15 +130,27 @@ program
 // Config commands
 program
   .command('config')
-  .description('Manage qlood configuration (model, api key)')
-  .addCommand(new Command('model')
-    .argument('<id>')
-    .description('Set default OpenRouter model id')
-    .action((id) => { setModel(id); console.log(`Model set to ${id}`); }))
+  .description('Manage qlood configuration (model, api key, prompt)')
+  
   .addCommand(new Command('key')
     .argument('<apiKey>')
     .description('Set OpenRouter API key (stored in ~/.qlood/config.json)')
-    .action((apiKey) => { setApiKey(apiKey); console.log('API key updated'); }));
+    .action((apiKey) => { setApiKey(apiKey); console.log('API key updated'); }))
+  .addCommand(new Command('prompt')
+    .argument('<prompt>')
+    .description('Set main system prompt for AI agent')
+    .action((prompt) => { setMainPrompt(prompt); console.log('Main prompt updated'); }))
+  .addCommand(new Command('instructions')
+    .argument('<instructions>')
+    .description('Set additional system instructions for AI agent')
+    .action((instructions) => { setSystemInstructions(instructions); console.log('System instructions updated'); }))
+  .addCommand(new Command('debug')
+    .description('Enable debug mode for detailed logging')
+    .action(() => { 
+      debugLogger.enable(process.cwd());
+      console.log('Debug mode enabled. Logs will be saved to ./.qlood/debug/');
+      console.log(`Debug file: ${debugLogger.getDebugFile()}`);
+    }));
 
 program
   .command('tui')
