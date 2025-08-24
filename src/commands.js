@@ -1,4 +1,5 @@
 import { createChrome, ensurePage } from './chrome.js';
+import { getHeadlessMode } from './config.js';
 
 // Best-effort: dismiss common consent/cookie overlays (Google/YouTube and similar)
 export async function dismissConsentIfPresent(page) {
@@ -47,7 +48,7 @@ export async function dismissConsentIfPresent(page) {
 }
 
 export async function openCmd(url, opts = {}) {
-  const { headless = false, debug = false, silent = false } = opts;
+  const { headless = getHeadlessMode(), debug = false, silent = false } = opts;
   await createChrome({ headless, debug });
   const page = await ensurePage();
   await page.goto(url, { waitUntil: 'domcontentloaded' });

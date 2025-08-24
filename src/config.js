@@ -73,3 +73,15 @@ export function getPromptUseCase() {
   const cfg = loadConfig();
   return cfg.promptUseCase || 'default';
 }
+
+// Headless mode configuration
+export function setHeadlessMode(enabled) {
+  const cfg = loadConfig();
+  cfg.headlessMode = Boolean(enabled);
+  saveConfig(cfg);
+}
+
+export function getHeadlessMode() {
+  const cfg = loadConfig();
+  return cfg.headlessMode !== undefined ? cfg.headlessMode : true; // Default to true (headless)
+}

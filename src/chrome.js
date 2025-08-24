@@ -1,6 +1,7 @@
 import puppeteer from 'puppeteer';
 import os from 'os';
 import path from 'path';
+import { getHeadlessMode } from './config.js';
 
 let browser = null;
 let currentPage = null;
@@ -12,7 +13,7 @@ let launchOptions = null;
 // - devtools: boolean (explicitly open Chrome DevTools)
 // - maximize: boolean (start window maximized)
 // - windowSize: { width: number, height: number }
-export async function createChrome({ headless = false, debug = false, devtools = false, maximize = true, windowSize } = {}) {
+export async function createChrome({ headless = getHeadlessMode(), debug = false, devtools = false, maximize = true, windowSize } = {}) {
   if (browser) return browser;
   // Save the first launch options and reuse conceptually for the session
   if (!launchOptions) launchOptions = { headless, debug, devtools, maximize, windowSize };
@@ -31,17 +32,20 @@ export async function createChrome({ headless = false, debug = false, devtools =
   }
 
   browser = await puppeteer.launch({
-    headless: launchOptions.headless ?? !launchOptions.debug,
+    headless: launchOptions.headless,
     devtools: !!launchOptions.devtools,
     defaultViewport: null, // let viewport match the browser window size
-    // slowMo is useful in debug to watch steps
-    ...(launchOptions.debug ? { slowMo: 100 } : {}),
+    // slowMo is useful in debug to watch steps, but only when not in headless mode
+    ...(launchOptions.debug && !launchOptions.headless ? { slowMo: 100 } : {}),
     userDataDir,
     args,
   });
   const pages = await browser.pages();
   currentPage = pages[0] || (await browser.newPage());
-  try { await currentPage.bringToFront(); } catch {}
+  // Only bring to front when not in headless mode
+  if (!launchOptions.headless) {
+    try { await currentPage.bringToFront(); } catch {}
+  }
   // Best-effort cleanup on exit
   process.on('exit', async () => {
     try { await browser?.close?.(); } catch {}

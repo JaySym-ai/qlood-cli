@@ -1,6 +1,6 @@
 import blessed from 'blessed';
 import fs from 'fs';
-import { loadConfig, setApiKey, getApiKey, setMainPrompt, setSystemInstructions, getMainPrompt, getSystemInstructions } from './config.js';
+import { loadConfig, setApiKey, getApiKey, setMainPrompt, setSystemInstructions, getMainPrompt, getSystemInstructions, setHeadlessMode, getHeadlessMode } from './config.js';
 import { openCmd, gotoCmd, clickCmd, typeCmd } from './commands.js';
 import { withPage, createChrome, cancelCurrentAction } from './chrome.js';
 import { runAgent, cancelAgentRun } from './agent.js';
@@ -390,8 +390,8 @@ export async function runTui() {
   let histIndex = -1;
 
   async function ensureChromeReady() {
-    // Launch if needed; open normal window, maximized, no DevTools.
-    await createChrome({ headless: false, debug: false, devtools: false, maximize: true });
+    // Launch if needed using current headless configuration
+    await createChrome({ devtools: false, maximize: true });
   }
 
   async function handle(line) {
@@ -489,10 +489,20 @@ export async function runTui() {
           addLog('{yellow-fg}Debug mode is not enabled.{/}');
           showToast('Debug not enabled', 'warn');
         }
+      } else if (cmd === '/headless') {
+        const currentMode = getHeadlessMode();
+        const newMode = !currentMode;
+        setHeadlessMode(newMode);
+        const status = newMode ? '{green-fg}Active{/}' : '{yellow-fg}Deactivated{/}';
+        addLog(`Headless mode: ${status}`);
+        showToast(`Headless ${newMode ? 'enabled' : 'disabled'}`, newMode ? 'success' : 'warn');
+        addLog('{dim-fg}Browser will restart with new settings on next command.{/}');
+        // Close current browser so next command will use new headless setting
+        await cancelCurrentAction();
       } else if (cmd.startsWith('/open ')) {
         const url = cmd.replace('/open ', '').trim();
         if (!url) return addLog('Usage: /open <url>');
-        await openCmd(url, { debug: true, silent: true });
+        await openCmd(url, { silent: true });
         addLog(`Opened ${url}`);
         showToast('Opened browser', 'info');
       } else if (cmd.startsWith('/goto ')) {
@@ -526,6 +536,7 @@ export async function runTui() {
         addLog('  {cyan-fg}/prompt <main prompt>{/}');
         addLog('  {cyan-fg}/instructions <system instructions>{/}');
         addLog('  {cyan-fg}/debug{/} / {cyan-fg}/debug off{/}');
+        addLog('  {cyan-fg}/headless{/}');
         addLog('  {cyan-fg}/open <url>{/}');
         addLog('  {cyan-fg}/goto <url>{/}');
         addLog('  {cyan-fg}/click <selector>{/}');
@@ -554,7 +565,7 @@ export async function runTui() {
         if (!scenario) return addLog('Usage: /test <scenario>');
         showWorking();
         try {
-          await runProjectTest(scenario, { debug: true, onLog: (m) => addLog(m) });
+          await runProjectTest(scenario, { debug: true, headless: getHeadlessMode(), onLog: (m) => addLog(m) });
           addLog('{green-fg}Test completed{/}');
           showToast('Test completed', 'success');
         } catch (e) {
@@ -583,7 +594,7 @@ export async function runTui() {
         try {
           await runAgent(sanitizedCmd, {
             debug: true,
-            headless: false,
+            headless: getHeadlessMode(),
             promptForApiKey: false,
             onLog: (m) => addLog(m),
           });
@@ -744,6 +755,7 @@ export async function runTui() {
       '  /prompt <text>         Set main prompt',
       '  /instructions <text>   Set system instructions',
       '  /debug | /debug off    Toggle debug logging',
+      '  /headless              Toggle headless mode',
       '  /open <url>            Open new browser',
       '  /goto <url>            Navigate current tab',
       '  /click <selector>      Click element',
@@ -835,6 +847,7 @@ export async function runTui() {
       '{bold}Prompt{/} - /prompt <text>',
       '{bold}Instr{/}  - /instructions <text>',
       '{bold}Debug{/}  - /debug',
+      '{bold}Headless{/} - /headless',
     ];
     paletteList.setItems(entries);
     paletteOverlay.show();
