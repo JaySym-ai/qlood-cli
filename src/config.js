@@ -61,3 +61,15 @@ export function getSystemInstructions() {
   const cfg = loadConfig();
   return cfg.systemInstructions || '';
 }
+
+// Prompt use-case selection (for src/prompts)
+export function setPromptUseCase(name) {
+  const cfg = loadConfig();
+  cfg.promptUseCase = String(name || 'default');
+  saveConfig(cfg);
+}
+
+export function getPromptUseCase() {
+  const cfg = loadConfig();
+  return cfg.promptUseCase || 'default';
+}

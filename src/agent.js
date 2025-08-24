@@ -13,7 +13,23 @@ export function cancelAgentRun() {
 
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { getApiKey, getModel, setApiKey, getMainPrompt, getSystemInstructions } from './config.js';
+import { getApiKey, getModel, setApiKey, getMainPrompt, getSystemInstructions, loadConfig, getPromptUseCase } from './config.js';
+import { getPrompt as getTemplatePrompt, composeGuidelines } from './prompts/index.js';
+
+import fs from 'node:fs';
+import path from 'node:path';
+
+function getQloodDir() {
+  const dir = path.join(process.cwd(), '.qlood');
+  try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch {}
+  return dir;
+}
+function resolveQloodPath(rel) {
+  const base = getQloodDir();
+  const p = path.resolve(base, rel || '');
+  if (!p.startsWith(base)) throw new Error('Access outside ./.qlood is not allowed');
+  return p;
+}
 
 // Tool registry with schemas and handlers
 const toolRegistry = {
@@ -363,6 +379,72 @@ const toolRegistry = {
       return result;
     },
   },
+
+  // Qlood local knowledge base and workflow tools (scoped to ./.qlood)
+  qloodList: {
+    description: 'List files under ./.qlood (notes, workflows, etc.)',
+    schema: {
+      type: 'object',
+      properties: { },
+      required: [],
+      additionalProperties: false,
+    },
+    handler: async () => {
+      const dir = getQloodDir();
+      const files = fs.readdirSync(dir).filter(f => !f.startsWith('.'));
+      return { files };
+    }
+  },
+  qloodRead: {
+    description: 'Read a UTF-8 file from ./.qlood',
+    schema: {
+      type: 'object',
+      properties: { path: { type: 'string' } },
+      required: ['path'],
+      additionalProperties: false,
+    },
+    handler: async (_page, args) => {
+      const p = resolveQloodPath(String(args.path));
+      if (!fs.existsSync(p)) throw new Error('File not found');
+      const content = fs.readFileSync(p, 'utf8');
+      return { path: path.relative(getQloodDir(), p), content };
+    }
+  },
+  qloodWrite: {
+    description: 'Write a UTF-8 file to ./.qlood (overwrite by default, or append)',
+    schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string' },
+        content: { type: 'string' },
+        append: { type: 'boolean' }
+      },
+      required: ['path', 'content'],
+      additionalProperties: false,
+    },
+    handler: async (_page, args) => {
+      const p = resolveQloodPath(String(args.path));
+      const dir = path.dirname(p);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const data = String(args.content);
+      if (args.append) fs.appendFileSync(p, data, 'utf8'); else fs.writeFileSync(p, data, 'utf8');
+      return { path: path.relative(getQloodDir(), p), bytes: Buffer.byteLength(data, 'utf8'), append: !!args.append };
+    }
+  },
+  qloodDelete: {
+    description: 'Delete a file from ./.qlood',
+    schema: {
+      type: 'object',
+      properties: { path: { type: 'string' } },
+      required: ['path'],
+      additionalProperties: false,
+    },
+    handler: async (_page, args) => {
+      const p = resolveQloodPath(String(args.path));
+      if (fs.existsSync(p)) fs.rmSync(p, { force: true });
+      return { path: path.relative(getQloodDir(), p), deleted: true };
+    }
+  },
 };
 
 function toolsForPrompt() {
@@ -409,7 +491,60 @@ function coercePlanShape(obj) {
   return null;
 }
 
+// Check if a query is conversational and can be answered without tools
+function isConversationalQuery(goal) {
+  const lowerGoal = goal.toLowerCase().trim();
+  
+  // Simple identity questions
+  if (lowerGoal.match(/^(who are you|what are you|what is this|hello|hi|help)(\?)?$/)) {
+    return true;
+  }
+  
+  // Questions about capabilities without asking to do something
+  if (lowerGoal.match(/^(what can you do|what do you do|how do you work)(\?)?$/)) {
+    return true;
+  }
+  
+  // Basic greetings without requests
+  if (lowerGoal.match(/^(good morning|good afternoon|good evening|hey there)(\?)?$/)) {
+    return true;
+  }
+  
+  return false;
+}
+
+// Handle conversational queries without tools
+function handleConversationalQuery(goal, onLog) {
+  const lowerGoal = goal.toLowerCase().trim();
+  
+  let response = '';
+  
+  if (lowerGoal.match(/^(who are you|what are you)(\?)?$/)) {
+    response = 'I am Qlood, an AI assistant that can help you automate web browsers and execute CLI commands to accomplish your goals.';
+  } else if (lowerGoal.match(/^(what can you do|what do you do)(\?)?$/)) {
+    response = 'I can help you automate web browsing tasks (clicking, typing, navigating), execute CLI commands, and manage files in your .qlood directory for notes and workflows.';
+  } else if (lowerGoal.match(/^(hello|hi|hey there|good morning|good afternoon|good evening)(\?)?$/)) {
+    response = 'Hello! I\'m ready to help you with web automation or CLI tasks. What would you like me to do?';
+  } else if (lowerGoal.match(/^(help|what is this)(\?)?$/)) {
+    response = 'I\'m Qlood, an AI that automates web browsers and runs CLI commands. You can ask me to navigate websites, fill forms, click buttons, execute terminal commands, or manage local files. Just tell me what you want to accomplish!';
+  } else if (lowerGoal.match(/^how do you work(\?)?$/)) {
+    response = 'I work by understanding your goals and using tools to accomplish them - I can control web browsers, execute CLI commands, take screenshots, and manage files. Just describe what you want to do and I\'ll break it down into steps.';
+  }
+  
+  if (onLog) {
+    onLog(response);
+  } else {
+    console.log(response);
+  }
+}
+
 export async function runAgent(goal, { headless = false, debug = false, promptForApiKey = true, onLog } = {}) {
+  // Check if this is a conversational query that doesn't need tools
+  if (isConversationalQuery(goal)) {
+    handleConversationalQuery(goal, onLog);
+    return;
+  }
+
   // Sanitize the goal to prevent Unicode issues
   const sanitizedGoal = goal
     .replace(/[\u{10000}-\u{10FFFF}]/gu, '?')
@@ -467,32 +602,23 @@ export async function runAgent(goal, { headless = false, debug = false, promptFo
       ? `\nRecent actions:\n${actionHistory.slice(-3).map((h, i) => `${actionHistory.length - 3 + i + 1}. ${h}`).join('\n')}`
       : '';
     
-    const mainPrompt = getMainPrompt();
+    const cfg = loadConfig();
+    const useCase = getPromptUseCase();
+    const basePrompt = (cfg.mainPrompt || '').trim() || getTemplatePrompt(useCase);
+    const guidelines = composeGuidelines();
     const systemInstructions = getSystemInstructions();
     const additionalInstructions = systemInstructions ? `\n\nAdditional Instructions:\n${systemInstructions}` : '';
     
-    const prompt = `${mainPrompt}
+    const prompt = `${guidelines}
 
 Goal: ${sanitizedGoal}
-You have tools (name, description, JSON schema parameters):
+
+Tools (name, description, JSON schema parameters):
 ${JSON.stringify(tools, null, 2)}
 
 State:
 ${context}${historyText}
-
-IMPORTANT: 
-- Don't repeat the same action
-- For searches, use the 'search' tool instead of separate type+click
-- If you just typed text, try pressEnter() or click a submit button
-- If the goal seems achieved, use the 'done' tool
-- Be efficient - combine actions when possible
-- You can use 'cli' tool to execute system commands when needed
-- Use 'cliHelp' to get help for unfamiliar commands${additionalInstructions}
-
-Respond ONLY with a single JSON object representing a tool call. Accepted shapes:
-- {"tool": "name", "args": { ... }}
-- {"function_call": {"name": "name", "arguments": "{...json...}"}}
-- {"functionCall": {"name": "name", "args": { ... }}}`;
+${additionalInstructions}`;
 
     // Sanitize the prompt to prevent Unicode issues
     const sanitizedPrompt = prompt
