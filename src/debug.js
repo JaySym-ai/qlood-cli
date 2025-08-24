@@ -1,15 +1,46 @@
 import fs from 'fs';
 import path from 'path';
 
+function cleanupOldDebugFiles(debugDir, maxFiles = 5) {
+  try {
+    if (!fs.existsSync(debugDir)) return;
+    
+    // Get all debug files
+    const files = fs.readdirSync(debugDir)
+      .filter(file => file.startsWith('debug-') && file.endsWith('.txt'))
+      .map(file => ({
+        name: file,
+        path: path.join(debugDir, file),
+        stat: fs.statSync(path.join(debugDir, file))
+      }))
+      .sort((a, b) => b.stat.mtime - a.stat.mtime); // Sort by modification time, newest first
+    
+    // Remove files beyond maxFiles limit
+    if (files.length > maxFiles) {
+      const filesToDelete = files.slice(maxFiles);
+      filesToDelete.forEach(file => {
+        try {
+          fs.unlinkSync(file.path);
+        } catch (err) {
+          console.error(`Failed to delete old debug file ${file.name}:`, err.message);
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Failed to cleanup old debug files:', error.message);
+  }
+}
+
 export class DebugLogger {
   constructor() {
     this.debugEnabled = false;
     this.debugFile = null;
     this.sessionId = null;
     this.stepCounter = 0;
+    this.autoEnabled = false;
   }
 
-  enable(projectPath = process.cwd()) {
+  enable(projectPath = process.cwd(), silent = false) {
     if (this.debugEnabled) return;
 
     this.debugEnabled = true;
@@ -21,6 +52,9 @@ export class DebugLogger {
     if (!fs.existsSync(debugDir)) {
       fs.mkdirSync(debugDir, { recursive: true });
     }
+
+    // Cleanup old debug files before creating new one
+    cleanupOldDebugFiles(debugDir, 5);
 
     // Create debug file
     const debugFileName = `debug-${this.sessionId}.txt`;
@@ -35,7 +69,9 @@ export class DebugLogger {
       platform: process.platform
     });
 
-    console.log(`🐛 Debug mode enabled. Logging to: ${this.debugFile}`);
+    if (!silent) {
+      console.log(`🐛 Debug logging enabled. Session: ${this.sessionId}`);
+    }
   }
 
   disable() {
@@ -50,8 +86,14 @@ export class DebugLogger {
     this.debugFile = null;
     this.sessionId = null;
     this.stepCounter = 0;
+    this.autoEnabled = false;
+  }
 
-    console.log('🐛 Debug mode disabled.');
+  autoEnable(projectPath = process.cwd()) {
+    if (!this.autoEnabled) {
+      this.enable(projectPath, true); // Enable silently
+      this.autoEnabled = true;
+    }
   }
 
   isEnabled() {
@@ -189,3 +231,18 @@ export class DebugLogger {
 
 // Global debug logger instance
 export const debugLogger = new DebugLogger();
+
+// Auto-cleanup on process exit
+process.on('exit', () => {
+  debugLogger.disable();
+});
+
+process.on('SIGINT', () => {
+  debugLogger.disable();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  debugLogger.disable();
+  process.exit(0);
+});

@@ -539,6 +539,9 @@ function handleConversationalQuery(goal, onLog) {
 }
 
 export async function runAgent(goal, { headless = false, debug = false, promptForApiKey = true, onLog } = {}) {
+  // Auto-enable debug logging (always log to files, debug param only controls TUI display)
+  debugLogger.autoEnable(process.cwd());
+
   // Check if this is a conversational query that doesn't need tools
   if (isConversationalQuery(goal)) {
     handleConversationalQuery(goal, onLog);
@@ -719,7 +722,28 @@ ${additionalInstructions}`;
       page = await ensurePage();
     }
   }
-  if (onLog) onLog(`Tool: ${tool} ${args ? JSON.stringify(args) : ''}`);
+  if (debug && onLog) {
+    onLog(`Tool: ${tool} ${args ? JSON.stringify(args) : ''}`);
+  } else if (onLog && tool !== 'done') {
+    // Show natural, conversational action descriptions when not in debug mode
+    const actionDesc = tool === 'goto' ? `🌐 Opening ${args?.url}` :
+                       tool === 'click' ? `👆 Clicking on "${args?.selector}"` :
+                       tool === 'type' ? `⌨️  Typing "${args?.text}"` :
+                       tool === 'scroll' ? `📜 Scrolling the page` :
+                       tool === 'screenshot' ? `📸 Taking a screenshot` :
+                       tool === 'pressEnter' ? `⏎ Pressing Enter` :
+                       tool === 'search' ? `🔍 Searching for "${args?.query}"` :
+                       tool === 'cli' ? `💻 Running command: ${args?.command}` :
+                       tool === 'cliHelp' ? `❓ Getting help for command: ${args?.command}` :
+                       tool === 'cliList' ? `📋 Checking running processes` :
+                       tool === 'cliKill' ? `❌ Stopping process ${args?.processId}` :
+                       tool === 'qloodList' ? `📂 Looking at your project files` :
+                       tool === 'qloodRead' ? `📖 Reading file: ${args?.path}` :
+                       tool === 'qloodWrite' ? `✍️  Writing to file: ${args?.path}` :
+                       tool === 'qloodDelete' ? `🗑️  Deleting file: ${args?.path}` :
+                       `🔧 Working on ${tool}`;
+    onLog(actionDesc);
+  }
   if (tool === 'done') { 
     if (onLog) onLog(`Done: ${args?.result ?? ''}`); 
     else console.log('Done:', args?.result ?? ''); 
@@ -734,9 +758,11 @@ ${additionalInstructions}`;
   await ensureAgentPage();
   // Small randomized delay before actions to avoid bursty behavior
   await sleep(300 + Math.floor(Math.random() * 500));
-  await entry.handler(page, args || {});
   
-  // Record the action in history
+  // Execute the tool and capture the result
+  const toolResult = await entry.handler(page, args || {});
+  
+  // Record the action and result in history
   const actionDesc = tool === 'goto' ? `navigated to ${args?.url}` :
                      tool === 'click' ? `clicked ${args?.selector}` :
                      tool === 'type' ? `typed "${args?.text}" into ${args?.selector}` :
@@ -746,8 +772,12 @@ ${additionalInstructions}`;
                      tool === 'search' ? `searched for "${args?.query}" in ${args?.selector}` :
                      tool === 'cli' ? `executed CLI: ${args?.command} ${args?.args?.join(' ') || ''}` :
                      tool === 'cliHelp' ? `got help for CLI: ${args?.command}` :
-                     tool === 'cliList' ? `listed background processes` :
+                     tool === 'cliList' ? `listed files: ${toolResult?.files ? toolResult.files.join(', ') : 'none'}` :
                      tool === 'cliKill' ? `killed process ${args?.processId}` :
+                     tool === 'qloodList' ? `found ${toolResult?.files?.length || 0} files: ${toolResult?.files?.join(', ') || 'none'}` :
+                     tool === 'qloodRead' ? `read file ${toolResult?.path}: ${(toolResult?.content || '').substring(0, 100)}${toolResult?.content?.length > 100 ? '...' : ''}` :
+                     tool === 'qloodWrite' ? `wrote ${toolResult?.bytes || 0} bytes to ${toolResult?.path}` :
+                     tool === 'qloodDelete' ? `deleted ${toolResult?.path}` :
                      `performed ${tool}`;
   actionHistory.push(actionDesc);
   }

@@ -9,6 +9,9 @@ import { ensureProjectInit, loadProjectConfig, getProjectStructurePath, saveProj
 import { runProjectTest } from './test.js';
 
 export async function runTui() {
+  // Auto-enable debug logging for this session
+  debugLogger.autoEnable(process.cwd());
+
   // Do NOT auto-launch Chrome here; lazily start on first browser command.
 
   const screen = blessed.screen({
@@ -463,32 +466,6 @@ export async function runTui() {
         setSystemInstructions(i);
         addLog('System instructions updated');
         showToast('System instructions updated', 'success');
-      } else if (cmd === '/debug') {
-        if (debugLogger.isEnabled()) {
-          const info = debugLogger.getSessionInfo();
-          addLog(`{yellow-fg}Debug already enabled{/} (Session: ${info.sessionId})`);
-          addLog(`Debug file: {blue-fg}${info.debugFile}{/}`);
-          addLog(`Steps logged: {cyan-fg}${info.stepCounter}{/}`);
-          addLog('Use {bold}/debug off{/} to disable.');
-        } else {
-          debugLogger.enable(process.cwd());
-          addLog('{green-fg}Debug mode enabled!{/}');
-          addLog(`Debug logs will be saved to {blue-fg}./.qlood/debug/{/}`);
-          addLog('All tool calls and AI requests will be logged.');
-          addLog('Use {bold}/debug off{/} to disable.');
-          showToast('Debug enabled', 'success');
-        }
-      } else if (cmd === '/debug off') {
-        if (debugLogger.isEnabled()) {
-          const debugFile = debugLogger.getDebugFile();
-          debugLogger.disable();
-          addLog('{yellow-fg}Debug mode disabled.{/}');
-          addLog(`Final debug log: {blue-fg}${debugFile}{/}`);
-          showToast('Debug disabled', 'warn');
-        } else {
-          addLog('{yellow-fg}Debug mode is not enabled.{/}');
-          showToast('Debug not enabled', 'warn');
-        }
       } else if (cmd === '/headless') {
         const currentMode = getHeadlessMode();
         const newMode = !currentMode;
@@ -535,7 +512,6 @@ export async function runTui() {
         addLog('  {cyan-fg}/key <apiKey>{/}');
         addLog('  {cyan-fg}/prompt <main prompt>{/}');
         addLog('  {cyan-fg}/instructions <system instructions>{/}');
-        addLog('  {cyan-fg}/debug{/} / {cyan-fg}/debug off{/}');
         addLog('  {cyan-fg}/headless{/}');
         addLog('  {cyan-fg}/open <url>{/}');
         addLog('  {cyan-fg}/goto <url>{/}');
@@ -565,7 +541,7 @@ export async function runTui() {
         if (!scenario) return addLog('Usage: /test <scenario>');
         showWorking();
         try {
-          await runProjectTest(scenario, { debug: true, headless: getHeadlessMode(), onLog: (m) => addLog(m) });
+          await runProjectTest(scenario, { debug: false, headless: getHeadlessMode(), onLog: (m) => addLog(m) });
           addLog('{green-fg}Test completed{/}');
           showToast('Test completed', 'success');
         } catch (e) {
@@ -593,7 +569,7 @@ export async function runTui() {
         showWorking();
         try {
           await runAgent(sanitizedCmd, {
-            debug: true,
+            debug: false, // Never show debug info in TUI, but logging is always enabled
             headless: getHeadlessMode(),
             promptForApiKey: false,
             onLog: (m) => addLog(m),
@@ -754,7 +730,6 @@ export async function runTui() {
       '  /key <apiKey>          Set API key',
       '  /prompt <text>         Set main prompt',
       '  /instructions <text>   Set system instructions',
-      '  /debug | /debug off    Toggle debug logging',
       '  /headless              Toggle headless mode',
       '  /open <url>            Open new browser',
       '  /goto <url>            Navigate current tab',
@@ -846,7 +821,6 @@ export async function runTui() {
       '{bold}API Key{/}- /key <apiKey>',
       '{bold}Prompt{/} - /prompt <text>',
       '{bold}Instr{/}  - /instructions <text>',
-      '{bold}Debug{/}  - /debug',
       '{bold}Headless{/} - /headless',
     ];
     paletteList.setItems(entries);
