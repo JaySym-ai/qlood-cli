@@ -9,20 +9,27 @@ const __dirname = path.dirname(__filename);
 const packageJson = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
 const currentVersion = packageJson.version;
 
-exec('npm view qlood-cli version', (err, stdout) => {
-  if (err) return;
-  const latestVersion = stdout.trim();
-  if (currentVersion !== latestVersion) {
-    console.log(`
-New version available: ${latestVersion}. You are using ${currentVersion}.`);
-    console.log('Auto-updating in the background...');
-    const updater = spawn('npm', ['i', 'qlood-cli'], {
-      detached: true,
-      stdio: 'ignore'
-    });
-    updater.unref();
-  }
-});
+// Lightweight update notice (no auto-install by default). Disable via QLOOD_NO_UPDATE=1
+if (process.env.QLOOD_NO_UPDATE !== '1') {
+  exec('npm view qlood-cli version', (err, stdout) => {
+    if (err) return;
+    const latestVersion = stdout.trim();
+    if (latestVersion && currentVersion !== latestVersion) {
+      console.log(`\nNew version available: ${latestVersion}. You are using ${currentVersion}.`);
+      console.log('To update:');
+      console.log('  - Local project:  npm i qlood-cli');
+      console.log('  - Global install: npm i -g qlood-cli');
+      // If explicit opt-in is set, perform background install
+      if (process.env.QLOOD_AUTOUPDATE === '1') {
+        console.log('Auto-updating in the background (QLOOD_AUTOUPDATE=1)...');
+        try {
+          const updater = spawn('npm', ['i', 'qlood-cli'], { detached: true, stdio: 'ignore', shell: true });
+          updater.unref();
+        } catch {}
+      }
+    }
+  });
+}
 
 import { Command } from 'commander';
 import dotenv from 'dotenv';
@@ -33,6 +40,9 @@ import { runTui } from '../src/tui.js';
 import { loadConfig, setApiKey, setMainPrompt, setSystemInstructions } from '../src/config.js';
 import { runProjectTest } from '../src/test.js';
 import { debugLogger } from '../src/debug.js';
+import { ensureAuggieUpToDate } from '../src/auggie-integration.js';
+import { generateProjectContext, getProjectDir } from '../src/project.js';
+import fs from 'fs/promises';
 
 
 dotenv.config();
@@ -62,7 +72,7 @@ const cfgDefaults = loadConfig();
 program
   .name('qlood')
   .description('AI-powered testing CLI for your web app. Initializes ./.qlood and drives Chromium to find bugs.')
-  .version('0.1.0');
+  .version(currentVersion);
 
 program.option('--headless', 'Run headless Chromium', false);
 program.option('--debug', 'Run with visible browser and devtools', false);
@@ -168,6 +178,134 @@ program
     const opts = program.opts();
     const scenario = Array.isArray(scenarioParts) ? scenarioParts.join(' ') : String(scenarioParts);
     await runProjectTest(scenario, { headless: !!opts.headless, debug: !!opts.debug });
+  });
+
+program
+  .command('init-context')
+  .description('Generate or regenerate the project context file at ./.qlood/notes/context.md')
+  .action(async () => {
+    console.log('Initializing project context...');
+    try {
+      // Don't pass silent option here - we want console output for CLI command
+      const success = await generateProjectContext(process.cwd());
+      if (success) {
+        console.log('✓ Project context generated successfully');
+        process.exit(0);
+      } else {
+        console.error('✗ Failed to generate project context');
+        process.exit(1);
+      }
+    } catch (error) {
+      console.error(`✗ Error generating project context: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// Clean command to remove .qlood directory
+program
+  .command('clean')
+  .description('Remove the ./.qlood directory to force reinitialization')
+  .action(async () => {
+    const cwd = process.cwd();
+    const qloodDir = getProjectDir(cwd);
+
+    // Check if .qlood directory exists using fs/promises
+    try {
+      await fs.access(qloodDir);
+    } catch {
+      console.log('No .qlood directory found in the current project.');
+      return;
+    }
+
+    console.log(`Removing ${qloodDir}...`);
+
+    try {
+      // Use fs.rm with recursive option for directory removal
+      await fs.rm(qloodDir, { recursive: true, force: true });
+      console.log('✓ Successfully removed .qlood directory');
+      console.log('The project will be reinitialized on the next run.');
+    } catch (error) {
+      console.error(`✗ Error removing .qlood directory: ${error.message}`);
+      console.error('You may need to remove it manually.');
+      process.exit(1);
+    }
+  });
+
+// Auggie integration commands
+program
+  .command('auggie-check')
+  .description('Ensure Auggie is up-to-date and display the result')
+  .action(async () => {
+    console.log('Checking Auggie CLI status...');
+    try {
+      const result = await ensureAuggieUpToDate();
+      if (result.success) {
+        console.log(`✓ ${result.message}`);
+        if (result.version) {
+          console.log(`  Version: ${result.version}`);
+        }
+        process.exit(0);
+      } else {
+        console.error(`✗ ${result.message}`);
+        process.exit(1);
+      }
+    } catch (error) {
+      console.error(`✗ Error checking Auggie: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('auggie-context')
+  .description('Show project info from ./.qlood/notes/context.md (use --update to regenerate)')
+  .option('-u, --update', 'Regenerate context with Auggie before showing', false)
+  .action(async (cmdOpts) => {
+    const cwd = process.cwd();
+    const qloodContextPath = path.join(getProjectDir(cwd), 'notes', 'context.md');
+    const rootContextPath = path.join(cwd, 'context.md');
+
+    try {
+      // If not updating and context file exists, read and print it
+      if (!cmdOpts.update) {
+        try {
+          // Prefer ./.qlood/notes/context.md, else fall back to ./context.md
+          let contextPathToRead = qloodContextPath;
+          try { await fs.access(qloodContextPath); }
+          catch {
+            await fs.access(rootContextPath);
+            contextPathToRead = rootContextPath;
+          }
+          const content = await fs.readFile(contextPathToRead, 'utf-8');
+          const stat = await fs.stat(contextPathToRead);
+          const rel = path.relative(cwd, contextPathToRead);
+          console.log(`\n--- Project Context (${rel}) ---`);
+          console.log(`Last updated: ${new Date(stat.mtime).toISOString()}\n`);
+          console.log(content);
+          process.exit(0);
+          return;
+        } catch {}
+      }
+
+      // Otherwise, (re)generate using Auggie and then print
+      console.log(cmdOpts.update ? 'Updating project context with Auggie...' : 'Generating project context with Auggie...');
+      const ok = await generateProjectContext(cwd, { silent: true });
+      if (!ok) {
+        console.error('✗ Failed to generate project context with Auggie');
+        process.exit(1);
+      }
+
+      // Read the freshly generated file
+      const content = await fs.readFile(qloodContextPath, 'utf-8');
+      const stat = await fs.stat(qloodContextPath);
+      const rel = path.relative(cwd, qloodContextPath);
+      console.log(`\n--- Project Context (${rel}) ---`);
+      console.log(`Last updated: ${new Date(stat.mtime).toISOString()}\n`);
+      console.log(content);
+      process.exit(0);
+    } catch (error) {
+      console.error(`✗ Error getting project context: ${error.message}`);
+      process.exit(1);
+    }
   });
 
 if (process.argv.length <= 2) {

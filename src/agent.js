@@ -1,4 +1,4 @@
-import { ensurePage, getBrowser, createChrome, screenshot as takeScreenshot } from './chrome.js';
+import { ensurePage, getBrowserContext as getBrowser, createChrome, screenshot as takeScreenshot } from './chrome.js';
 import { gotoCmd, clickCmd, typeCmd } from './commands.js';
 import { cliExecutor } from './cli-executor.js';
 import { debugLogger } from './debug.js';

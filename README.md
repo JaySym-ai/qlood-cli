@@ -1,6 +1,6 @@
 ## qlood-cli
 
-Open-source CLI to help you test your own app. qlood initializes a project-local `./.qlood/` folder, then uses AI-driven browser automation (Chromium via Puppeteer + OpenRouter LLMs) to explore and find bugs in your web app. Mobile emulators (Android/iOS) are on the roadmap.
+Open-source CLI to help you test your own app. qlood initializes a project-local `./.qlood/` folder, then uses AI-driven browser automation (Chromium via Playwright + OpenRouter LLMs) to explore and find bugs in your web app. Mobile emulators (Android/iOS) are on the roadmap.
 
 - One-package install with bundled Chromium
 - Project-local state in `./.qlood` (config, runs, screenshots, notes)

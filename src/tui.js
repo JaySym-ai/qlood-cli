@@ -1,11 +1,12 @@
 import blessed from 'blessed';
 import fs from 'fs';
+import path from 'path';
 import { loadConfig, setApiKey, getApiKey, setMainPrompt, setSystemInstructions, getMainPrompt, getSystemInstructions, setHeadlessMode, getHeadlessMode } from './config.js';
 import { openCmd, gotoCmd, clickCmd, typeCmd } from './commands.js';
 import { withPage, createChrome, cancelCurrentAction } from './chrome.js';
 import { runAgent, cancelAgentRun } from './agent.js';
 import { debugLogger } from './debug.js';
-import { ensureProjectInit, loadProjectConfig, getProjectStructurePath, saveProjectStructure, scanProject } from './project.js';
+import { ensureProjectInit, loadProjectConfig, getProjectStructurePath, saveProjectStructure, scanProject, generateProjectContext, getProjectDir } from './project.js';
 import { runProjectTest } from './test.js';
 
 export async function runTui() {
@@ -129,6 +130,8 @@ export async function runTui() {
 
   let spinnerTimer = null;
   let headerAnimTimer = null;
+  // Loading message animator for log
+  let loadingInterval = null;
   const spinnerFrames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
   let spinnerIndex = 0;
   let working = false;
@@ -319,6 +322,23 @@ export async function runTui() {
     addLog('We can create ./.qlood, scan your project to set sensible defaults (URL, start command), and add a basic workflow.');
     addLog('Initialize now? {bold}y{/}/n');
   } else {
+    // Check if context.md exists, if not generate it
+    const contextPath = path.join(getProjectDir(process.cwd()), 'notes', 'context.md');
+    if (!fs.existsSync(contextPath)) {
+      addLog('{cyan-fg}Generating missing project context...{/}');
+      startLoadingAnimation('Analyzing project with Auggie...');
+
+      generateProjectContext(process.cwd(), { silent: true }).then(success => {
+        if (success) {
+          stopLoadingAnimation('Project context generated successfully');
+        } else {
+          stopLoadingAnimation('Could not generate project context', false);
+        }
+      }).catch(error => {
+        stopLoadingAnimation(`Context generation failed: ${error.message}`, false);
+      });
+    }
+
     const structurePath = getProjectStructurePath(process.cwd());
     if (fs.existsSync(structurePath)) {
       const storedStructure = JSON.parse(fs.readFileSync(structurePath, 'utf-8'));
@@ -331,14 +351,68 @@ export async function runTui() {
     }
   }
 
+  // Loading animation helper - operates on the main log widget
+  function startLoadingAnimation(message) {
+    const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let frameIndex = 0;
+    // Add the loading message as a new log line
+    addLog(`{cyan-fg}${frames[0]} ${message}{/}`);
+
+    loadingInterval = setInterval(() => {
+      // Update the last line with the animation
+      const content = log.getContent();
+      const lines = content.split('\n');
+      if (lines.length > 0) {
+        // Update the last line with the current frame
+        lines[lines.length - 1] = `{cyan-fg}${frames[frameIndex]} ${message}{/}`;
+        log.setContent(lines.join('\n'));
+        screen.render();
+      }
+      frameIndex = (frameIndex + 1) % frames.length;
+    }, 80);
+  }
+
+  function stopLoadingAnimation(finalMessage, isSuccess = true) {
+    if (loadingInterval) {
+      clearInterval(loadingInterval);
+      loadingInterval = null;
+      // Update the last line with the final message
+      const content = log.getContent();
+      const lines = content.split('\n');
+      if (lines.length > 0) {
+        const color = isSuccess ? 'green-fg' : 'yellow-fg';
+        const icon = isSuccess ? '✓' : '⚠';
+        lines[lines.length - 1] = `{${color}}${icon} ${finalMessage}{/}`;
+        log.setContent(lines.join('\n'));
+        screen.render();
+      }
+    }
+  }
+
   // Global Y/N handling when we expect confirmation
-  screen.key(['y', 'Y'], () => {
+  screen.key(['y', 'Y'], async () => {
     if (!expectingInitConfirm && !expectingStructureUpdateConfirm) return;
     input.clearValue();
     if (expectingInitConfirm) {
-      ensureProjectInit({});
+      // Initialize without context generation (we'll do it with animation)
+      const result = await ensureProjectInit({ skipContext: true });
       const cfg = loadProjectConfig(process.cwd());
       addLog(`{green-fg}Initialized ./.qlood{/} (url: ${cfg?.devServer?.url || 'n/a'}, start: ${cfg?.devServer?.start || 'n/a'})`);
+
+      // Now generate context with animation
+      startLoadingAnimation('Generating project context with Auggie...');
+
+      try {
+        const success = await generateProjectContext(process.cwd(), { silent: true });
+        if (success) {
+          stopLoadingAnimation('Project context generated successfully');
+        } else {
+          stopLoadingAnimation('Could not generate project context', false);
+        }
+      } catch (error) {
+        stopLoadingAnimation(`Context generation failed: ${error.message}`, false);
+      }
+
       addLog('You can now run a test with {bold}/test <your scenario>{/} or type a goal for the agent.');
       showToast('Project initialized', 'success');
       expectingInitConfirm = false;
@@ -346,7 +420,24 @@ export async function runTui() {
     if (expectingStructureUpdateConfirm) {
       const currentStructure = scanProject(process.cwd());
       saveProjectStructure(currentStructure, process.cwd());
-      addLog(`{green-fg}Project structure updated.{/}`);
+
+      // Generate context with animation
+      startLoadingAnimation('Updating project context with Auggie...');
+
+      try {
+        const success = await generateProjectContext(process.cwd(), { silent: true });
+        if (success) {
+          stopLoadingAnimation('Project context updated successfully');
+          addLog(`{green-fg}Project structure and context updated.{/}`);
+        } else {
+          stopLoadingAnimation('Could not update project context', false);
+          addLog(`{green-fg}Project structure updated.{/}`);
+        }
+      } catch (error) {
+        stopLoadingAnimation(`Context update failed: ${error.message}`, false);
+        addLog(`{green-fg}Project structure updated.{/}`);
+      }
+
       addLog('You can now continue using qlood.');
       showToast('Project structure updated', 'success');
       expectingStructureUpdateConfirm = false;
@@ -413,9 +504,25 @@ export async function runTui() {
       if (expectingInitConfirm) {
         const ans = cmd.toLowerCase();
         if (ans === 'y' || ans === 'yes') {
-          ensureProjectInit({});
+          // Initialize without context generation (we'll do it with animation)
+          const result = await ensureProjectInit({ skipContext: true });
           const cfg = loadProjectConfig(process.cwd());
           addLog(`{green-fg}Initialized ./.qlood{/} (url: ${cfg?.devServer?.url || 'n/a'}, start: ${cfg?.devServer?.start || 'n/a'})`);
+
+          // Now generate context with animation
+          startLoadingAnimation('Generating project context with Auggie...');
+
+          try {
+            const success = await generateProjectContext(process.cwd(), { silent: true });
+            if (success) {
+              stopLoadingAnimation('Project context generated successfully');
+            } else {
+              stopLoadingAnimation('Could not generate project context', false);
+            }
+          } catch (error) {
+            stopLoadingAnimation(`Context generation failed: ${error.message}`, false);
+          }
+
           addLog('You can now run a test with {bold}/test <your scenario>{/} or type a goal for the agent.');
           showToast('Project initialized', 'success');
           expectingInitConfirm = false;
@@ -436,7 +543,24 @@ export async function runTui() {
         if (ans === 'y' || ans === 'yes') {
           const currentStructure = scanProject(process.cwd());
           saveProjectStructure(currentStructure, process.cwd());
-          addLog(`{green-fg}Project structure updated.{/}`);
+
+          // Generate context with animation
+          startLoadingAnimation('Updating project context with Auggie...');
+
+          try {
+            const success = await generateProjectContext(process.cwd(), { silent: true });
+            if (success) {
+              stopLoadingAnimation('Project context updated successfully');
+              addLog(`{green-fg}Project structure and context updated.{/}`);
+            } else {
+              stopLoadingAnimation('Could not update project context', false);
+              addLog(`{green-fg}Project structure updated.{/}`);
+            }
+          } catch (error) {
+            stopLoadingAnimation(`Context update failed: ${error.message}`, false);
+            addLog(`{green-fg}Project structure updated.{/}`);
+          }
+
           addLog('You can now continue using qlood.');
           showToast('Project structure updated', 'success');
           expectingStructureUpdateConfirm = false;
@@ -520,6 +644,7 @@ export async function runTui() {
         addLog('  {cyan-fg}/goto <url>{/}');
         addLog('  {cyan-fg}/click <selector>{/}');
         addLog('  {cyan-fg}/type <selector> <text>{/}');
+        addLog('  {cyan-fg}/context [--update]{/}');
         addLog('  {cyan-fg}/tools{/}');
         addLog('  {cyan-fg}/test <scenario>{/}');
         addLog('  {cyan-fg}/quit{/}');
@@ -539,6 +664,49 @@ export async function runTui() {
         addLog('  {blue-fg}cliHelp{/}(command): Get help for CLI commands');
         addLog('  {blue-fg}cliList{/}(): List running background processes');
         addLog('  {blue-fg}cliKill{/}(processId): Kill background process');
+      } else if (cmd === '/context' || cmd.startsWith('/context ')) {
+        const wantsUpdate = /\b(--update|-u|update)\b/.test(cmd);
+        const cwd = process.cwd();
+        const qloodPath = path.join(getProjectDir(cwd), 'notes', 'context.md');
+        const rootPath = path.join(cwd, 'context.md');
+        if (wantsUpdate) {
+          showWorking();
+          addLog('{cyan-fg}Updating project context with Auggie...{/}');
+          try {
+            const ok = await generateProjectContext(cwd, { silent: true });
+            if (ok) {
+              addLog('{green-fg}✓ Project context updated{/}');
+              showToast('Context updated', 'success');
+            } else {
+              addLog('{yellow-fg}⚠ Failed to update project context{/}');
+              showToast('Context update failed', 'error');
+            }
+          } catch (e) {
+            addLog(`{red-fg}Context update error:{/} ${e?.message || e}`);
+            showToast('Context update error', 'error');
+          } finally {
+            hideWorking();
+          }
+        }
+
+        // Read and display context
+        try {
+          let readPath = null;
+          if (fs.existsSync(qloodPath)) readPath = qloodPath;
+          else if (fs.existsSync(rootPath)) readPath = rootPath;
+          if (!readPath) {
+            addLog('{yellow-fg}No context found.{/} Use {bold}/context --update{/} to generate it.');
+          } else {
+            const rel = path.relative(cwd, readPath);
+            const content = fs.readFileSync(readPath, 'utf-8');
+            const stat = fs.statSync(readPath);
+            addLog(`{bold}--- Project Context (${rel}) ---{/}`);
+            addLog(`{dim-fg}Last updated: ${new Date(stat.mtime).toISOString()}{/}`);
+            addLog(content);
+          }
+        } catch (e) {
+          addLog(`{red-fg}Error reading context:{/} ${e?.message || e}`);
+        }
       } else if (cmd.startsWith('/test ')) {
         const scenario = cmd.replace('/test ', '').trim();
         if (!scenario) return addLog('Usage: /test <scenario>');
@@ -738,6 +906,7 @@ export async function runTui() {
       '  /goto <url>            Navigate current tab',
       '  /click <selector>      Click element',
       '  /type <sel> <text>     Type into element',
+      '  /context [--update]    Show or update project context',
       '  /tools                 List tools',
       '  /test <scenario>       Run AI test',
       '  /quit                  Exit',
@@ -819,6 +988,7 @@ export async function runTui() {
       '{bold}Goto{/}   - /goto <url>',
       '{bold}Click{/}  - /click <selector>',
       '{bold}Type{/}   - /type <selector> <text>',
+      '{bold}Context{/}- /context [--update]',
       '{bold}Tools{/}  - /tools',
       '{bold}Test{/}   - /test <scenario>',
       '{bold}API Key{/}- /key <apiKey>',

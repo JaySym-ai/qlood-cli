@@ -13,7 +13,7 @@
     "start": "node bin/qlood.js",
     "dev": "node --enable-source-maps bin/qlood.js --help",
     "lint": "eslint .",
-    "test": "node --version && echo 'Tests TBD'",
+    "test": "node bin/qlood.js --help",
     "qlood": "qlood"
   },
   "keywords": [
@@ -22,7 +22,7 @@
     "web",
     "automation",
     "chromium",
-    "puppeteer",
+    "playwright",
     "cdp",
     "openrouter",
     "llm",
@@ -35,6 +35,6 @@
     "clipboardy": "^4.0.0",
     "commander": "^12.1.0",
     "dotenv": "^16.4.5",
-    "puppeteer": "^24.17.0"
+    "playwright": "^1.55.0"
   }
 }

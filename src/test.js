@@ -24,7 +24,8 @@ async function waitForHttp(url, { timeoutMs = 30000, intervalMs = 1000 } = {}) {
 
 export async function runProjectTest(goal, { headless, debug, onLog } = {}) {
   const cwd = process.cwd();
-  ensureProjectInit({ cwd });
+  // Don't skip context here - let it run normally for test command
+  await ensureProjectInit({ cwd });
   const cfg = loadProjectConfig(cwd);
   if (!cfg) throw new Error('Project not initialized. Launch `qlood` and accept the init prompt.');
 

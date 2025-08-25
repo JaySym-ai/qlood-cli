@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import { executeCustomPrompt } from './auggie-integration.js';
+import { initializePrompt } from './prompts/prompt.initialize.js';
 
 export function getProjectDir(cwd = process.cwd()) {
   return path.join(cwd, '.qlood'); // project-local folder ./.qlood
@@ -152,15 +154,154 @@ export function saveProjectStructure(structure, cwd = process.cwd()) {
   fs.writeFileSync(p, JSON.stringify(structure, null, 2));
 }
 
-export function ensureProjectInit({ cwd = process.cwd(), force = false } = {}) {
+/**
+ * Extracts clean markdown content from Auggie's response by removing tool call artifacts
+ * @param {string} rawResponse - The raw response from Auggie
+ * @returns {string} Clean markdown content
+ */
+function extractCleanMarkdown(rawResponse) {
+  if (!rawResponse) return '';
+
+  // Split response into lines for processing
+  const lines = rawResponse.split('\n');
+  const cleanLines = [];
+  let inToolCall = false;
+  let inCodeBlock = false;
+  let skipNextEmoji = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmedLine = line.trim();
+
+    // Track code blocks to avoid filtering content within them
+    if (trimmedLine.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      cleanLines.push(line);
+      continue;
+    }
+
+    // If we're in a code block, preserve all content
+    if (inCodeBlock) {
+      cleanLines.push(line);
+      continue;
+    }
+
+    // Detect start of tool calls
+    if (trimmedLine.startsWith('<function_calls>') || trimmedLine.includes('[90m🔧 Tool call:')) {
+      inToolCall = true;
+      continue;
+    }
+
+    // Detect end of tool calls
+    if (trimmedLine.startsWith('</function_calls>') || trimmedLine.includes('[90m📋 Tool result:')) {
+      inToolCall = false;
+      skipNextEmoji = true;
+      continue;
+    }
+
+    // Skip lines that are part of tool calls
+    if (inToolCall) {
+      continue;
+    }
+
+    // Skip tool call artifacts and processing indicators
+    if (
+      trimmedLine.startsWith('<invoke') ||
+      trimmedLine.startsWith('<') ||
+      trimmedLine.startsWith('[90m') ||
+      trimmedLine.includes('Tool call:') ||
+      trimmedLine.includes('Tool result:') ||
+      (skipNextEmoji && trimmedLine.startsWith('🤖'))
+    ) {
+      skipNextEmoji = false;
+      continue;
+    }
+
+    // Skip lines that show truncated output
+    if (trimmedLine.includes('... (') && trimmedLine.includes('more lines)')) {
+      continue;
+    }
+
+    // Add the clean line
+    cleanLines.push(line);
+  }
+
+  // Join lines and clean up excessive whitespace
+  let cleanContent = cleanLines.join('\n');
+
+  // Remove multiple consecutive blank lines
+  cleanContent = cleanContent.replace(/\n{3,}/g, '\n\n');
+
+  // Trim leading and trailing whitespace
+  cleanContent = cleanContent.trim();
+
+  return cleanContent;
+}
+
+export async function generateProjectContext(cwd = process.cwd(), options = {}) {
+  try {
+    // Don't log here if called from TUI (it will handle the animation)
+    if (!options.silent) {
+      console.log('Generating project context with Auggie...');
+    }
+
+    // Execute the initialize prompt using Auggie
+    const result = await executeCustomPrompt(initializePrompt, {
+      cwd,
+      usePrintFormat: true,
+      timeout: 120000 // 2 minutes timeout for project analysis
+    });
+
+    if (!result.success) {
+      if (!options.silent) {
+        console.error('Failed to generate project context:', result.stderr);
+      }
+      return false;
+    }
+
+    // Extract clean markdown from the response
+    const cleanMarkdown = extractCleanMarkdown(result.stdout);
+
+    // Ensure the notes directory exists
+    ensureProjectDirs(cwd);
+
+    // Save the clean markdown to context.md
+    const contextPath = path.join(getProjectDir(cwd), 'notes', 'context.md');
+    fs.writeFileSync(contextPath, cleanMarkdown, 'utf-8');
+
+    if (!options.silent) {
+      console.log(`Project context saved to ${contextPath}`);
+    }
+    return true;
+  } catch (error) {
+    if (!options.silent) {
+      console.error('Error generating project context:', error);
+    }
+    return false;
+  }
+}
+
+export async function ensureProjectInit({ cwd = process.cwd(), force = false, skipContext = false } = {}) {
   const base = ensureProjectDirs(cwd);
   const p = getProjectConfigPath(cwd);
+  let wasInitialized = false;
+
   if (!fs.existsSync(p) || force) {
     const detected = detectProjectConfig(cwd);
     saveProjectConfig(detected || defaultProjectConfig(), cwd);
     createBasicWorkflow(cwd);
     const structure = scanProject(cwd);
     saveProjectStructure(structure, cwd);
+    wasInitialized = true;
+
+    // Only generate context if not skipped (for TUI to handle with animation)
+    if (!skipContext) {
+      try {
+        await generateProjectContext(cwd);
+      } catch (error) {
+        console.warn('Warning: Failed to generate project context:', error.message);
+      }
+    }
   }
-  return base;
+  return { base, wasInitialized };
 }

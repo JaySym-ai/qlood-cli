@@ -1,9 +1,9 @@
-import puppeteer from 'puppeteer';
+import { chromium } from 'playwright';
 import os from 'os';
 import path from 'path';
 import { getHeadlessMode } from './config.js';
 
-let browser = null;
+let context = null;
 let currentPage = null;
 let launchOptions = null;
 
@@ -14,7 +14,7 @@ let launchOptions = null;
 // - maximize: boolean (start window maximized)
 // - windowSize: { width: number, height: number }
 export async function createChrome({ headless = getHeadlessMode(), debug = false, devtools = false, maximize = true, windowSize } = {}) {
-  if (browser) return browser;
+  if (context) return context;
   // Save the first launch options and reuse conceptually for the session
   if (!launchOptions) launchOptions = { headless, debug, devtools, maximize, windowSize };
   // Use a persistent profile in the user home to look like a stable browser
@@ -26,41 +26,43 @@ export async function createChrome({ headless = getHeadlessMode(), debug = false
     '--no-default-browser-check',
   ];
   if (launchOptions.maximize) args.push('--start-maximized');
-  if (launchOptions.windowSize && !launchOptions.maximize) {
-    const { width, height } = launchOptions.windowSize;
-    if (width && height) args.push(`--window-size=${width},${height}`);
-  }
-
-  browser = await puppeteer.launch({
+  
+  const launchParams = {
     headless: launchOptions.headless,
     devtools: !!launchOptions.devtools,
-    defaultViewport: null, // let viewport match the browser window size
+    args,
     // slowMo is useful in debug to watch steps, but only when not in headless mode
     ...(launchOptions.debug && !launchOptions.headless ? { slowMo: 100 } : {}),
-    userDataDir,
-    args,
-  });
-  const pages = await browser.pages();
-  currentPage = pages[0] || (await browser.newPage());
+  };
+
+  if (launchOptions.windowSize && !launchOptions.maximize) {
+    const { width, height } = launchOptions.windowSize;
+    if (width && height) launchParams.viewport = { width, height };
+  }
+
+  context = await chromium.launchPersistentContext(userDataDir, launchParams);
+
+  const pages = context.pages();
+  currentPage = pages[0] || (await context.newPage());
   // Only bring to front when not in headless mode
   if (!launchOptions.headless) {
     try { await currentPage.bringToFront(); } catch {}
   }
   // Best-effort cleanup on exit
   process.on('exit', async () => {
-    try { await browser?.close?.(); } catch {}
+    try { await context?.close?.(); } catch {}
   });
-  return browser;
+  return context;
 }
 
-export async function getBrowser() {
-  if (!browser) throw new Error('Browser not started');
-  return browser;
+export async function getBrowserContext() {
+  if (!context) throw new Error('Browser not started');
+  return context;
 }
 
 export async function withPage(fn) {
-  const b = await getBrowser();
-  if (!currentPage) currentPage = await b.newPage();
+  const ctx = await getBrowserContext();
+  if (!currentPage) currentPage = await ctx.newPage();
   return fn(currentPage);
 }
 
@@ -69,22 +71,24 @@ export async function setCurrentPage(page) {
 }
 
 export async function listPages() {
-  const b = await getBrowser();
-  return b.pages();
+  const ctx = await getBrowserContext();
+  return ctx.pages();
 }
 
 export async function newTab() {
-  const b = await getBrowser();
-  const page = await b.newPage();
+  const ctx = await getBrowserContext();
+  const page = await ctx.newPage();
   await setCurrentPage(page);
   return page;
 }
 
 export async function switchToTab(index) {
-  const b = await getBrowser();
-  const pages = await b.pages();
+  const ctx = await getBrowserContext();
+  const pages = ctx.pages();
   if (index < 0 || index >= pages.length) throw new Error(`Invalid tab index ${index}`);
-  await setCurrentPage(pages[index]);
+  const page = pages[index];
+  await page.bringToFront();
+  await setCurrentPage(page);
 }
 
 export async function screenshot(page, path) {
@@ -92,31 +96,26 @@ export async function screenshot(page, path) {
 }
 
 export async function ensurePage() {
-  const b = await getBrowser();
+  const ctx = await getBrowserContext();
   
   // Check if current page is detached or closed
-  if (currentPage) {
-    try {
-      await currentPage.evaluate(() => document.title);
-    } catch (error) {
-      // Page is detached/closed, create a new one
-      console.log('Page detached, creating new page...');
-      currentPage = null;
-    }
+  if (currentPage && currentPage.isClosed()) {
+    console.log('Page detached, creating new page...');
+    currentPage = null;
   }
   
   if (!currentPage) {
-    currentPage = await b.newPage();
+    currentPage = await ctx.newPage();
   }
   
   return currentPage;
 }
 
 export async function closeBrowser() {
-  if (browser) {
-    try { await browser.close(); } catch {}
+  if (context) {
+    try { await context.close(); } catch {}
   }
-  browser = null;
+  context = null;
   currentPage = null;
 }
 
