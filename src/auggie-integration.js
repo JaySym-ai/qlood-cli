@@ -1,9 +1,4 @@
 import { spawn, exec } from 'child_process';
-import { promisify } from 'util';
-import { existsSync } from 'fs';
-import { join } from 'path';
-
-const execAsync = promisify(exec);
 
 /**
  * Auggie CLI Integration Module
@@ -225,6 +220,114 @@ export class AuggieIntegration {
   }
 
   /**
+   * Checks if the user is authenticated with Auggie
+   * @returns {Promise<{success: boolean, authenticated: boolean, error?: string}>}
+   */
+  async checkAuthentication() {
+    try {
+      // Try to run a simple command that requires authentication
+      const result = await this._executeCommand('auggie', ['--print-augment-token'], {
+        timeout: 5000 // Short timeout for auth check
+      });
+
+      // If the command succeeds and returns a token, user is authenticated
+      if (result.success && result.stdout && result.stdout.trim().length > 0) {
+        return {
+          success: true,
+          authenticated: true
+        };
+      }
+
+      // Check for the specific "API URL not specified" error
+      if (result.stderr.includes('API URL not specified') || result.stderr.includes('❌ API URL not specified')) {
+        return {
+          success: true,
+          authenticated: false
+        };
+      }
+
+      // If command failed for other reasons, assume not authenticated
+      return {
+        success: true,
+        authenticated: false
+      };
+    } catch (error) {
+      return {
+        success: false,
+        authenticated: false,
+        error: `Error checking authentication: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * Executes a raw Auggie command with arguments
+   * @param {string[]} args - Arguments to pass to Auggie
+   * @param {Object} options - Additional options
+   * @returns {Promise<{success: boolean, stdout?: string, stderr?: string}>}
+   */
+  async executeRawCommand(args = [], options = {}) {
+    try {
+      // Check if this is an interactive command that should be run directly
+      const interactiveCommands = ['--login', '--logout', '--compact'];
+      const isInteractive = args.some(arg => interactiveCommands.includes(arg));
+
+      if (isInteractive) {
+        // For interactive commands, use spawn to preserve TTY interaction
+        return await this._executeInteractiveCommand(args, options);
+      }
+
+      const result = await this._executeCommand(this.auggieCommand, args, {
+        timeout: options.timeout || this.timeout,
+        cwd: options.cwd || process.cwd()
+      });
+
+      return {
+        success: result.success,
+        stdout: result.stdout,
+        stderr: result.stderr
+      };
+    } catch (error) {
+      return {
+        success: false,
+        stderr: `Error executing Auggie command: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * Executes an interactive Auggie command using spawn
+   * @private
+   */
+  async _executeInteractiveCommand(args, options = {}) {
+    const { spawn } = await import('child_process');
+
+    return new Promise((resolve) => {
+      const child = spawn(this.auggieCommand, args, {
+        stdio: 'inherit', // This preserves TTY interaction
+        cwd: options.cwd || process.cwd(),
+        env: process.env
+      });
+
+      child.on('close', (code) => {
+        resolve({
+          success: code === 0,
+          stdout: '', // stdout is handled by inherit
+          stderr: ''
+        });
+      });
+
+      child.on('error', (error) => {
+        resolve({
+          success: false,
+          stdout: '',
+          stderr: `Error executing interactive command: ${error.message}`
+        });
+      });
+    });
+  }
+
+  /**
    * Private method to execute Auggie CLI commands
    * @private
    */
@@ -266,19 +369,42 @@ export class AuggieIntegration {
       env = process.env
     } = options;
 
+    let childProcess = null;
+
     try {
       const fullCommand = `${command} ${args.map(arg => this._escapeArg(arg)).join(' ')}`;
-      
-      const { stdout, stderr } = await Promise.race([
-        execAsync(fullCommand, { 
-          cwd, 
-          env, 
-          maxBuffer: this.maxBuffer 
-        }),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Command timeout')), timeout)
-        )
-      ]);
+
+      // Create a promise that can be cancelled
+      const execPromise = new Promise((resolve, reject) => {
+        childProcess = exec(fullCommand, {
+          cwd,
+          env,
+          maxBuffer: this.maxBuffer
+        }, (error, stdout, stderr) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve({ stdout, stderr });
+          }
+        });
+      });
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => {
+          if (childProcess) {
+            childProcess.kill('SIGTERM');
+            // Give it a moment to clean up, then force kill
+            setTimeout(() => {
+              if (childProcess && !childProcess.killed) {
+                childProcess.kill('SIGKILL');
+              }
+            }, 1000);
+          }
+          reject(new Error('Command timeout'));
+        }, timeout)
+      );
+
+      const { stdout, stderr } = await Promise.race([execPromise, timeoutPromise]);
 
       return {
         success: true,
@@ -286,6 +412,15 @@ export class AuggieIntegration {
         stderr: stderr.trim()
       };
     } catch (error) {
+      // Ensure child process is cleaned up
+      if (childProcess && !childProcess.killed) {
+        try {
+          childProcess.kill('SIGKILL');
+        } catch (killError) {
+          // Ignore kill errors
+        }
+      }
+
       return {
         success: false,
         stdout: error.stdout || '',
@@ -315,6 +450,8 @@ export const writeFile = (filePath, content, options) => defaultAuggie.writeFile
 export const updateFile = (filePath, instructions, options) => defaultAuggie.updateFile(filePath, instructions, options);
 export const getProjectContext = (options) => defaultAuggie.getProjectContext(options);
 export const executeCustomPrompt = (prompt, options) => defaultAuggie.executeCustomPrompt(prompt, options);
+export const checkAuthentication = () => defaultAuggie.checkAuthentication();
+export const executeRawCommand = (args, options) => defaultAuggie.executeRawCommand(args, options);
 
 // Export the class as default
 export default AuggieIntegration;

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { executeCustomPrompt } from './auggie-integration.js';
 import { initializePrompt } from './prompts/prompt.initialize.js';
+import { simpleInitializePrompt } from './prompts/prompt.initialize-simple.js';
 
 export function getProjectDir(cwd = process.cwd()) {
   return path.join(cwd, '.qlood'); // project-local folder ./.qlood
@@ -245,18 +246,45 @@ export async function generateProjectContext(cwd = process.cwd(), options = {}) 
       console.log('Generating project context with Auggie...');
     }
 
-    // Execute the initialize prompt using Auggie
-    const result = await executeCustomPrompt(initializePrompt, {
+    // Try the comprehensive prompt first
+    let result = await executeCustomPrompt(initializePrompt, {
       cwd,
       usePrintFormat: true,
       timeout: 120000 // 2 minutes timeout for project analysis
     });
 
+    // If the comprehensive prompt fails, try the simple one
     if (!result.success) {
       if (!options.silent) {
-        console.error('Failed to generate project context:', result.stderr);
+        console.log('Comprehensive analysis failed, trying simplified analysis...');
       }
-      return false;
+
+      result = await executeCustomPrompt(simpleInitializePrompt, {
+        cwd,
+        usePrintFormat: true,
+        timeout: 60000 // 1 minute timeout for simple analysis
+      });
+    }
+
+    // If both Auggie attempts fail, use manual fallback
+    if (!result.success) {
+      if (!options.silent) {
+        console.log('Auggie analysis failed, generating basic context manually...');
+      }
+
+      const manualContext = generateManualContext(cwd);
+
+      // Ensure the notes directory exists
+      ensureProjectDirs(cwd);
+
+      // Save the manual context to context.md
+      const contextPath = path.join(getProjectDir(cwd), 'notes', 'context.md');
+      fs.writeFileSync(contextPath, manualContext, 'utf-8');
+
+      if (!options.silent) {
+        console.log(`Basic project context saved to ${contextPath}`);
+      }
+      return true;
     }
 
     // Extract clean markdown from the response
@@ -279,6 +307,88 @@ export async function generateProjectContext(cwd = process.cwd(), options = {}) 
     }
     return false;
   }
+}
+
+/**
+ * Generate a basic project context manually when Auggie is not available
+ * @param {string} cwd - Current working directory
+ * @returns {string} - Basic markdown context
+ */
+function generateManualContext(cwd = process.cwd()) {
+  let context = '# Project Context\n\n';
+  context += '*This context was generated automatically when AI analysis was unavailable.*\n\n';
+
+  // Try to read package.json
+  const packageJsonPath = path.join(cwd, 'package.json');
+  if (fs.existsSync(packageJsonPath)) {
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+
+      context += '## Project Information\n\n';
+      context += `**Name:** ${packageJson.name || 'Unknown'}\n\n`;
+      context += `**Version:** ${packageJson.version || 'Unknown'}\n\n`;
+
+      if (packageJson.description) {
+        context += `**Description:** ${packageJson.description}\n\n`;
+      }
+
+      // Scripts
+      if (packageJson.scripts) {
+        context += '## Available Scripts\n\n';
+        Object.entries(packageJson.scripts).forEach(([name, command]) => {
+          context += `- **${name}:** \`${command}\`\n`;
+        });
+        context += '\n';
+      }
+
+      // Dependencies
+      if (packageJson.dependencies) {
+        context += '## Dependencies\n\n';
+        const deps = Object.keys(packageJson.dependencies);
+        deps.slice(0, 10).forEach(dep => {
+          context += `- ${dep}\n`;
+        });
+        if (deps.length > 10) {
+          context += `- ... and ${deps.length - 10} more\n`;
+        }
+        context += '\n';
+      }
+    } catch (error) {
+      context += '## Project Information\n\n';
+      context += '*Could not parse package.json*\n\n';
+    }
+  }
+
+  // Try to read README
+  const readmePaths = ['README.md', 'README.txt', 'README'];
+  for (const readmePath of readmePaths) {
+    const fullReadmePath = path.join(cwd, readmePath);
+    if (fs.existsSync(fullReadmePath)) {
+      try {
+        const readmeContent = fs.readFileSync(fullReadmePath, 'utf-8');
+        context += '## README Content\n\n';
+        // Include first 1000 characters of README
+        const truncatedReadme = readmeContent.length > 1000
+          ? readmeContent.substring(0, 1000) + '...'
+          : readmeContent;
+        context += truncatedReadme + '\n\n';
+        break;
+      } catch (error) {
+        // Continue to next README file
+      }
+    }
+  }
+
+  context += '## Getting Started\n\n';
+  context += 'To get started with this project:\n\n';
+  context += '1. Install dependencies: `npm install` or `yarn install`\n';
+  context += '2. Check available scripts in package.json\n';
+  context += '3. Run the development server (typically `npm start` or `npm run dev`)\n\n';
+
+  context += '---\n\n';
+  context += '*To get a more detailed analysis, ensure Auggie is properly authenticated and try regenerating this context.*\n';
+
+  return context;
 }
 
 export async function ensureProjectInit({ cwd = process.cwd(), force = false, skipContext = false } = {}) {

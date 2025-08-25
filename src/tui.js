@@ -7,6 +7,7 @@ import { withPage, createChrome, cancelCurrentAction } from './chrome.js';
 import { runAgent, cancelAgentRun } from './agent.js';
 import { debugLogger } from './debug.js';
 import { ensureProjectInit, loadProjectConfig, getProjectStructurePath, saveProjectStructure, scanProject, generateProjectContext, getProjectDir } from './project.js';
+import { checkAuthentication } from './auggie-integration.js';
 import { runProjectTest } from './test.js';
 
 export async function runTui() {
@@ -299,6 +300,28 @@ export async function runTui() {
     screen.render();
   }
 
+  // Helper function to check Auggie authentication
+  async function checkAuggieAuth() {
+    try {
+      const authResult = await checkAuthentication();
+      if (authResult.success && authResult.authenticated) {
+        return true;
+      } else {
+        return false;
+      }
+    } catch (error) {
+      addLog(`{red-fg}Error checking Auggie authentication:{/} ${error.message}`);
+      return false;
+    }
+  }
+
+  // Helper function to show authentication error
+  function showAuthError(action = 'use AI features') {
+    addLog(`{red-fg}❌ Authentication required to ${action}.{/}`);
+    addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
+    showToast('Login required', 'error');
+  }
+
   addLog('{bold}Welcome to qlood TUI{/}');
   loadConfig();
   const apiKey = getApiKey();
@@ -309,37 +332,51 @@ export async function runTui() {
     addLog('{green-fg}API key configured{/}');
     showToast('API key configured', 'success');
   }
-  addLog('Type {bold}/help{/} for available commands.');
-  addLog('Tip: /test runs an AI test. If not initialized, we will prompt you.');
 
-  // If project isn't initialized, prompt to initialize
+  // Check Auggie authentication
+  const isAuggieAuthenticated = await checkAuggieAuth();
+  if (!isAuggieAuthenticated) {
+    addLog('{red-fg}❌ Authentication required for AI features.{/}');
+    addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
+    showToast('Login required', 'error');
+    // Skip project initialization when not authenticated, but continue with TUI setup
+  } else {
+    addLog('Type {bold}/help{/} for available commands.');
+    addLog('Tip: /test runs an AI test. If not initialized, we will prompt you.');
+  }
+
+  // If project isn't initialized, prompt to initialize (only if authenticated)
   let expectingInitConfirm = false;
   let expectingStructureUpdateConfirm = false;
-  const projectCfg = loadProjectConfig(process.cwd());
-  if (!projectCfg) {
-    expectingInitConfirm = true;
-    addLog('{yellow-fg}This project is not initialized for qlood.{/}');
-    addLog('We can create ./.qlood, scan your project to set sensible defaults (URL, start command), and add a basic workflow.');
-    addLog('Initialize now? {bold}y{/}/n');
-  } else {
-    // Check if context.md exists, if not generate it
-    const contextPath = path.join(getProjectDir(process.cwd()), 'notes', 'context.md');
-    if (!fs.existsSync(contextPath)) {
-      addLog('{cyan-fg}Generating missing project context...{/}');
-      startLoadingAnimation('Analyzing project with Auggie...');
+  if (isAuggieAuthenticated) {
+    const projectCfg = loadProjectConfig(process.cwd());
+    if (!projectCfg) {
+      expectingInitConfirm = true;
+      addLog('{yellow-fg}This project is not initialized for qlood.{/}');
+      addLog('We can create ./.qlood, scan your project to set sensible defaults (URL, start command), and add a basic workflow.');
+      addLog('This will also allow the {cyan-fg}www.augmentcode.com{/} Auggie CLI tool to index your codebase for faster retrieval.');
+      addLog('Initialize now? {bold}y{/}/n');
+    } else {
+      // Check if context.md exists, if not generate it
+      const contextPath = path.join(getProjectDir(process.cwd()), 'notes', 'context.md');
+      if (!fs.existsSync(contextPath)) {
+        addLog('{cyan-fg}Generating missing project context...{/}');
+        startLoadingAnimation('Analyzing project with Auggie...');
 
-      generateProjectContext(process.cwd(), { silent: true }).then(success => {
-        if (success) {
-          stopLoadingAnimation('Project context generated successfully');
-        } else {
-          stopLoadingAnimation('Could not generate project context', false);
-        }
-      }).catch(error => {
-        stopLoadingAnimation(`Context generation failed: ${error.message}`, false);
-      });
+        generateProjectContext(process.cwd(), { silent: true }).then(success => {
+          if (success) {
+            stopLoadingAnimation('Project context generated successfully');
+          } else {
+            stopLoadingAnimation('Could not generate project context', false);
+          }
+        }).catch(error => {
+          stopLoadingAnimation(`Context generation failed: ${error.message}`, false);
+        });
+      }
     }
+  }
 
-    const structurePath = getProjectStructurePath(process.cwd());
+  const structurePath = getProjectStructurePath(process.cwd());
     if (fs.existsSync(structurePath)) {
       const storedStructure = JSON.parse(fs.readFileSync(structurePath, 'utf-8'));
       const currentStructure = scanProject(process.cwd());
@@ -349,7 +386,6 @@ export async function runTui() {
         addLog('Update qlood knowledge about the project? {bold}y{/}/n');
       }
     }
-  }
 
   // Loading animation helper - operates on the main log widget
   function startLoadingAnimation(message) {
@@ -399,18 +435,24 @@ export async function runTui() {
       const cfg = loadProjectConfig(process.cwd());
       addLog(`{green-fg}Initialized ./.qlood{/} (url: ${cfg?.devServer?.url || 'n/a'}, start: ${cfg?.devServer?.start || 'n/a'})`);
 
-      // Now generate context with animation
-      startLoadingAnimation('Generating project context with Auggie...');
+      // Now generate context with animation (only if authenticated)
+      const authResult = await checkAuthentication();
+      if (authResult.success && authResult.authenticated) {
+        startLoadingAnimation('Generating project context with Auggie...');
 
-      try {
-        const success = await generateProjectContext(process.cwd(), { silent: true });
-        if (success) {
-          stopLoadingAnimation('Project context generated successfully');
-        } else {
-          stopLoadingAnimation('Could not generate project context', false);
+        try {
+          const success = await generateProjectContext(process.cwd(), { silent: true });
+          if (success) {
+            stopLoadingAnimation('Project context generated successfully');
+          } else {
+            stopLoadingAnimation('Could not generate project context', false);
+          }
+        } catch (error) {
+          stopLoadingAnimation(`Context generation failed: ${error.message}`, false);
         }
-      } catch (error) {
-        stopLoadingAnimation(`Context generation failed: ${error.message}`, false);
+      } else {
+        addLog('{red-fg}❌ Authentication required to generate context.{/}');
+        addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
       }
 
       addLog('You can now run a test with {bold}/test <your scenario>{/} or type a goal for the agent.');
@@ -421,21 +463,28 @@ export async function runTui() {
       const currentStructure = scanProject(process.cwd());
       saveProjectStructure(currentStructure, process.cwd());
 
-      // Generate context with animation
-      startLoadingAnimation('Updating project context with Auggie...');
+      // Generate context with animation (only if authenticated)
+      const authResult = await checkAuthentication();
+      if (authResult.success && authResult.authenticated) {
+        startLoadingAnimation('Updating project context with Auggie...');
 
-      try {
-        const success = await generateProjectContext(process.cwd(), { silent: true });
-        if (success) {
-          stopLoadingAnimation('Project context updated successfully');
-          addLog(`{green-fg}Project structure and context updated.{/}`);
-        } else {
-          stopLoadingAnimation('Could not update project context', false);
+        try {
+          const success = await generateProjectContext(process.cwd(), { silent: true });
+          if (success) {
+            stopLoadingAnimation('Project context updated successfully');
+            addLog(`{green-fg}Project structure and context updated.{/}`);
+          } else {
+            stopLoadingAnimation('Could not update project context', false);
+            addLog(`{green-fg}Project structure updated.{/}`);
+          }
+        } catch (error) {
+          stopLoadingAnimation(`Context update failed: ${error.message}`, false);
           addLog(`{green-fg}Project structure updated.{/}`);
         }
-      } catch (error) {
-        stopLoadingAnimation(`Context update failed: ${error.message}`, false);
+      } else {
         addLog(`{green-fg}Project structure updated.{/}`);
+        addLog('{red-fg}❌ Authentication required to generate context.{/}');
+        addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
       }
 
       addLog('You can now continue using qlood.');
@@ -509,18 +558,24 @@ export async function runTui() {
           const cfg = loadProjectConfig(process.cwd());
           addLog(`{green-fg}Initialized ./.qlood{/} (url: ${cfg?.devServer?.url || 'n/a'}, start: ${cfg?.devServer?.start || 'n/a'})`);
 
-          // Now generate context with animation
-          startLoadingAnimation('Generating project context with Auggie...');
+          // Now generate context with animation (only if authenticated)
+          const authResult = await checkAuthentication();
+          if (authResult.success && authResult.authenticated) {
+            startLoadingAnimation('Generating project context with Auggie...');
 
-          try {
-            const success = await generateProjectContext(process.cwd(), { silent: true });
-            if (success) {
-              stopLoadingAnimation('Project context generated successfully');
-            } else {
-              stopLoadingAnimation('Could not generate project context', false);
+            try {
+              const success = await generateProjectContext(process.cwd(), { silent: true });
+              if (success) {
+                stopLoadingAnimation('Project context generated successfully');
+              } else {
+                stopLoadingAnimation('Could not generate project context', false);
+              }
+            } catch (error) {
+              stopLoadingAnimation(`Context generation failed: ${error.message}`, false);
             }
-          } catch (error) {
-            stopLoadingAnimation(`Context generation failed: ${error.message}`, false);
+          } else {
+            addLog('{red-fg}❌ Authentication required to generate context.{/}');
+            addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
           }
 
           addLog('You can now run a test with {bold}/test <your scenario>{/} or type a goal for the agent.');
@@ -547,18 +602,26 @@ export async function runTui() {
           // Generate context with animation
           startLoadingAnimation('Updating project context with Auggie...');
 
-          try {
-            const success = await generateProjectContext(process.cwd(), { silent: true });
-            if (success) {
-              stopLoadingAnimation('Project context updated successfully');
-              addLog(`{green-fg}Project structure and context updated.{/}`);
-            } else {
-              stopLoadingAnimation('Could not update project context', false);
+          const authResult = await checkAuthentication();
+          if (authResult.success && authResult.authenticated) {
+            try {
+              const success = await generateProjectContext(process.cwd(), { silent: true });
+              if (success) {
+                stopLoadingAnimation('Project context updated successfully');
+                addLog(`{green-fg}Project structure and context updated.{/}`);
+              } else {
+                stopLoadingAnimation('Could not update project context', false);
+                addLog(`{green-fg}Project structure updated.{/}`);
+              }
+            } catch (error) {
+              stopLoadingAnimation(`Context update failed: ${error.message}`, false);
               addLog(`{green-fg}Project structure updated.{/}`);
             }
-          } catch (error) {
-            stopLoadingAnimation(`Context update failed: ${error.message}`, false);
+          } else {
+            stopLoadingAnimation('Project structure updated');
             addLog(`{green-fg}Project structure updated.{/}`);
+            addLog('{red-fg}❌ Authentication required to generate context.{/}');
+            addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
           }
 
           addLog('You can now continue using qlood.');
@@ -647,6 +710,7 @@ export async function runTui() {
         addLog('  {cyan-fg}/context [--update]{/}');
         addLog('  {cyan-fg}/tools{/}');
         addLog('  {cyan-fg}/test <scenario>{/}');
+        addLog('  {cyan-fg}/auggie-login{/} - Guide for Auggie authentication');
         addLog('  {cyan-fg}/quit{/}');
         addLog('');
         addLog('Free text (no /): run the AI agent with your request.');
@@ -664,28 +728,45 @@ export async function runTui() {
         addLog('  {blue-fg}cliHelp{/}(command): Get help for CLI commands');
         addLog('  {blue-fg}cliList{/}(): List running background processes');
         addLog('  {blue-fg}cliKill{/}(processId): Kill background process');
+      } else if (cmd === '/auggie-login' || cmd === '/login') {
+        addLog('{cyan-fg}To authenticate with Auggie:{/}');
+        addLog('1. Open a new terminal window');
+        addLog('2. Run: {bold}auggie --login{/}');
+        addLog('3. Follow the authentication prompts');
+        addLog('4. Once authenticated, restart qlood to use AI features');
+        addLog('');
+        addLog('If Auggie is not installed, run: {bold}qlood auggie-check{/}');
+        addLog('');
+        addLog('Alternative: Run {bold}auggie --compact{/} for a compact login interface');
       } else if (cmd === '/context' || cmd.startsWith('/context ')) {
         const wantsUpdate = /\b(--update|-u|update)\b/.test(cmd);
         const cwd = process.cwd();
         const qloodPath = path.join(getProjectDir(cwd), 'notes', 'context.md');
         const rootPath = path.join(cwd, 'context.md');
         if (wantsUpdate) {
-          showWorking();
-          addLog('{cyan-fg}Updating project context with Auggie...{/}');
-          try {
-            const ok = await generateProjectContext(cwd, { silent: true });
-            if (ok) {
-              addLog('{green-fg}✓ Project context updated{/}');
-              showToast('Context updated', 'success');
-            } else {
-              addLog('{yellow-fg}⚠ Failed to update project context{/}');
-              showToast('Context update failed', 'error');
+          const authResult = await checkAuthentication();
+          if (authResult.success && authResult.authenticated) {
+            showWorking();
+            addLog('{cyan-fg}Updating project context with Auggie...{/}');
+            try {
+              const ok = await generateProjectContext(cwd, { silent: true });
+              if (ok) {
+                addLog('{green-fg}✓ Project context updated{/}');
+                showToast('Context updated', 'success');
+              } else {
+                addLog('{yellow-fg}⚠ Failed to update project context{/}');
+                showToast('Context update failed', 'error');
+              }
+            } catch (e) {
+              addLog(`{red-fg}Context update error:{/} ${e?.message || e}`);
+              showToast('Context update error', 'error');
+            } finally {
+              hideWorking();
             }
-          } catch (e) {
-            addLog(`{red-fg}Context update error:{/} ${e?.message || e}`);
-            showToast('Context update error', 'error');
-          } finally {
-            hideWorking();
+          } else {
+            addLog('{red-fg}❌ Authentication required to update context.{/}');
+            addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
+            showToast('Login required', 'error');
           }
         }
 
@@ -708,6 +789,14 @@ export async function runTui() {
           addLog(`{red-fg}Error reading context:{/} ${e?.message || e}`);
         }
       } else if (cmd.startsWith('/test ')) {
+        const authResult = await checkAuthentication();
+        if (!authResult.success || !authResult.authenticated) {
+          addLog(`{red-fg}❌ Authentication required to run tests.{/}`);
+          addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
+          showToast('Login required', 'error');
+          return;
+        }
+
         const scenario = cmd.replace('/test ', '').trim();
         if (!scenario) return addLog('Usage: /test <scenario>');
         showWorking();
@@ -725,7 +814,15 @@ export async function runTui() {
         screen.destroy();
         process.exit(0);
       } else {
-        // Free text: run AI agent with this as the goal
+        // Free text: run AI agent with this as the goal (check authentication first)
+        const authResult = await checkAuthentication();
+        if (!authResult.success || !authResult.authenticated) {
+          addLog(`{red-fg}❌ Authentication required to run AI agent.{/}`);
+          addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
+          showToast('Login required', 'error');
+          return;
+        }
+
         function sanitizeGoal(text) {
           // Replace control chars and non-ASCII; strip combining marks
           return String(text)
@@ -761,11 +858,11 @@ export async function runTui() {
         } finally {
           hideWorking();
         }
-      }
+      } // End of else block
     } catch (e) {
       addLog(`{red-fg}Error:{/} ${e?.message || e}`);
     }
-  }
+  } // End of handle function
 
   // Removed placeholder handling - input field starts empty
 
@@ -827,7 +924,6 @@ export async function runTui() {
       if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
       screen.destroy();
       process.exit(0);
-      return;
     }
     lastCtrlC = now;
     addLog('{yellow-fg}Cancel requested{/}. Press Ctrl+C again to exit.');
@@ -870,148 +966,6 @@ export async function runTui() {
     if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
     screen.destroy();
     process.exit(0);
-  });
-
-  // F1 or ? -> Help overlay
-  function toggleHelpOverlay() {
-    if (helpOverlay && !helpOverlay.hidden) {
-      helpOverlay.hide();
-      backdrop.hidden = true;
-      screen.render();
-      return;
-    }
-    if (!helpOverlay) {
-      helpOverlay = blessed.box({
-        top: 'center', left: 'center', width: '80%', height: '70%',
-        border: { type: 'line' },
-        style: { fg: theme.fg, bg: theme.bg, border: { fg: theme.accent } },
-        tags: true,
-        scrollable: true,
-        keys: true,
-        mouse: true,
-        label: ' Help & Shortcuts ',
-        padding: { left: 1, right: 1, top: 1, bottom: 1 },
-        shadow: true,
-        content: ''
-      });
-      screen.append(helpOverlay);
-    }
-    const helpText = [
-      '{bold}Commands{/}',
-      '  /key <apiKey>          Set API key',
-      '  /prompt <text>         Set main prompt',
-      '  /instructions <text>   Set system instructions',
-      '  /headless              Toggle headless mode',
-      '  /open <url>            Open new browser',
-      '  /goto <url>            Navigate current tab',
-      '  /click <selector>      Click element',
-      '  /type <sel> <text>     Type into element',
-      '  /context [--update]    Show or update project context',
-      '  /tools                 List tools',
-      '  /test <scenario>       Run AI test',
-      '  /quit                  Exit',
-      '',
-      '{bold}Shortcuts{/}',
-      '  Enter    Run input',
-      '  Up/Down  History',
-      '  Ctrl+C   Cancel; twice to quit',
-      '  q        Quit',
-      '  F1/?     Toggle Help',
-      '  Ctrl+K   Command Palette',
-    ].join('\n');
-    helpOverlay.setContent(helpText);
-    helpOverlay.show();
-    backdrop.hidden = false;
-    helpOverlay.focus();
-    // Close on Esc / q / Enter / F1 / ?
-    helpOverlay.key(['escape', 'q', 'enter', 'f1', '?'], () => {
-      helpOverlay.hide();
-      backdrop.hidden = true;
-      input.focus();
-      screen.render();
-    });
-    screen.render();
-  }
-  screen.key(['f1', '?'], toggleHelpOverlay);
-
-  // Ctrl+K -> Command palette
-  function ensurePalette() {
-    if (paletteOverlay) return;
-    paletteOverlay = blessed.box({
-      top: 'center', left: 'center', width: '70%', height: '60%',
-      border: { type: 'line' },
-      style: { fg: theme.fg, bg: theme.bg, border: { fg: theme.accentAlt } },
-      label: ' Command Palette ',
-      shadow: true,
-    });
-    paletteList = blessed.list({
-      parent: paletteOverlay,
-      top: 1, left: 1, right: 1, bottom: 1,
-      keys: true,
-      vi: true,
-      mouse: true,
-      tags: true,
-      style: {
-        item: { fg: theme.fg },
-        selected: { fg: theme.bg, bg: theme.accent },
-      },
-      items: [],
-    });
-    paletteList.on('select', (el) => {
-      const raw = el.getText();
-      const cmd = raw.replace(/^.*?\s+-\s+/, '').trim();
-      input.setValue(cmd);
-      paletteOverlay.hide();
-      backdrop.hidden = true;
-      input.focus();
-      screen.render();
-    });
-    paletteOverlay.key(['escape'], () => {
-      paletteOverlay.hide();
-      backdrop.hidden = true;
-      input.focus();
-      screen.render();
-    });
-    screen.append(paletteOverlay);
-  }
-  function togglePalette() {
-    ensurePalette();
-    if (!paletteOverlay.hidden) {
-      paletteOverlay.hide();
-      backdrop.hidden = true;
-      input.focus();
-      screen.render();
-      return;
-    }
-    const entries = [
-      '{bold}Open{/}   - /open <url>',
-      '{bold}Goto{/}   - /goto <url>',
-      '{bold}Click{/}  - /click <selector>',
-      '{bold}Type{/}   - /type <selector> <text>',
-      '{bold}Context{/}- /context [--update]',
-      '{bold}Tools{/}  - /tools',
-      '{bold}Test{/}   - /test <scenario>',
-      '{bold}API Key{/}- /key <apiKey>',
-      '{bold}Prompt{/} - /prompt <text>',
-      '{bold}Instr{/}  - /instructions <text>',
-      '{bold}Headless{/} - /headless',
-    ];
-    paletteList.setItems(entries);
-    paletteOverlay.show();
-    backdrop.hidden = false;
-    paletteList.focus();
-    screen.render();
-  }
-  screen.key(['C-k'], togglePalette);
-
-  // Global Escape: close overlays and refocus input
-  screen.key(['escape'], () => {
-    if (helpOverlay && !helpOverlay.hidden) helpOverlay.hide();
-    if (paletteOverlay && !paletteOverlay.hidden) paletteOverlay.hide();
-    if (loadingOverlay && !loadingOverlay.hidden) { /* keep working overlay if running */ }
-    backdrop.hidden = true;
-    input.focus();
-    screen.render();
   });
 
   input.focus();
