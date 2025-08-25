@@ -13,8 +13,8 @@ export function cancelAgentRun() {
 
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { getApiKey, getModel, setApiKey, getMainPrompt, getSystemInstructions, loadConfig, getPromptUseCase } from './config.js';
-import { getPrompt as getTemplatePrompt, composeGuidelines } from './prompts/index.js';
+import { getApiKey, getModel, setApiKey, getSystemInstructions } from './config.js';
+import { composeGuidelines } from './prompts/index.js';
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -406,6 +406,12 @@ const toolRegistry = {
     handler: async (_page, args) => {
       const p = resolveQloodPath(String(args.path));
       if (!fs.existsSync(p)) throw new Error('File not found');
+      
+      const stat = fs.statSync(p);
+      if (stat.isDirectory()) {
+        throw new Error('Cannot read directory as file - use qloodList to list directory contents');
+      }
+      
       const content = fs.readFileSync(p, 'utf8');
       return { path: path.relative(getQloodDir(), p), content };
     }
@@ -581,7 +587,11 @@ export async function runAgent(goal, { headless = false, debug = false, promptFo
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // Simple loop: ask model what to do next; execute; feed back page title and URL
-  for (let step = 0; step < 10; step++) {
+  const maxSteps = 20;
+  const recentActions = [];
+  const actionWindow = 5; // Track last 5 actions to detect loops
+  
+  for (let step = 0; step < maxSteps; step++) {
     let context = 'No page open yet';
     if (page) {
       try {
@@ -605,9 +615,6 @@ export async function runAgent(goal, { headless = false, debug = false, promptFo
       ? `\nRecent actions:\n${actionHistory.slice(-3).map((h, i) => `${actionHistory.length - 3 + i + 1}. ${h}`).join('\n')}`
       : '';
     
-    const cfg = loadConfig();
-    const useCase = getPromptUseCase();
-    const basePrompt = (cfg.mainPrompt || '').trim() || getTemplatePrompt(useCase);
     const guidelines = composeGuidelines();
     const systemInstructions = getSystemInstructions();
     const additionalInstructions = systemInstructions ? `\n\nAdditional Instructions:\n${systemInstructions}` : '';
@@ -708,6 +715,22 @@ ${additionalInstructions}`;
     }
     
     const { tool, args } = coerced;
+    
+    // Simple loop detection - check if we're repeating the same action
+    const actionKey = `${tool}:${JSON.stringify(args)}`;
+    if (recentActions.includes(actionKey) && step > actionWindow) {
+      const msg = `Agent appears to be in a loop with action: ${actionKey}. Breaking early.`;
+      debugLogger.logError('Agent loop detection', new Error(msg));
+      if (onLog) onLog(msg); else console.log(msg);
+      break;
+    }
+    
+    // Update recent actions tracking (keep only last actionWindow actions)
+    recentActions.push(actionKey);
+    if (recentActions.length > actionWindow) {
+      recentActions.shift();
+    }
+    
   async function ensureAgentPage() {
     try { await getBrowser(); } catch { await createChrome({ headless, debug }); }
     
@@ -760,25 +783,54 @@ ${additionalInstructions}`;
   await sleep(300 + Math.floor(Math.random() * 500));
   
   // Execute the tool and capture the result
-  const toolResult = await entry.handler(page, args || {});
+  let toolResult;
+  let errorOccurred = false;
+  try {
+    toolResult = await entry.handler(page, args || {});
+  } catch (error) {
+    errorOccurred = true;
+    toolResult = { error: error.message };
+    if (onLog) onLog(`Agent error: ${error.message}`);
+    if (debug && onLog) onLog(`Full error details: ${JSON.stringify({ name: error.name, message: error.message, stack: error.stack })}`);
+  }
   
   // Record the action and result in history
-  const actionDesc = tool === 'goto' ? `navigated to ${args?.url}` :
-                     tool === 'click' ? `clicked ${args?.selector}` :
-                     tool === 'type' ? `typed "${args?.text}" into ${args?.selector}` :
-                     tool === 'scroll' ? `scrolled ${args?.y} pixels` :
-                     tool === 'screenshot' ? `took screenshot` :
-                     tool === 'pressEnter' ? `pressed Enter key` :
-                     tool === 'search' ? `searched for "${args?.query}" in ${args?.selector}` :
-                     tool === 'cli' ? `executed CLI: ${args?.command} ${args?.args?.join(' ') || ''}` :
-                     tool === 'cliHelp' ? `got help for CLI: ${args?.command}` :
-                     tool === 'cliList' ? `listed files: ${toolResult?.files ? toolResult.files.join(', ') : 'none'}` :
-                     tool === 'cliKill' ? `killed process ${args?.processId}` :
-                     tool === 'qloodList' ? `found ${toolResult?.files?.length || 0} files: ${toolResult?.files?.join(', ') || 'none'}` :
-                     tool === 'qloodRead' ? `read file ${toolResult?.path}: ${(toolResult?.content || '').substring(0, 100)}${toolResult?.content?.length > 100 ? '...' : ''}` :
-                     tool === 'qloodWrite' ? `wrote ${toolResult?.bytes || 0} bytes to ${toolResult?.path}` :
-                     tool === 'qloodDelete' ? `deleted ${toolResult?.path}` :
-                     `performed ${tool}`;
+  let actionDesc;
+  if (errorOccurred) {
+    actionDesc = `tried to ${tool === 'goto' ? `navigate to ${args?.url}` :
+                  tool === 'click' ? `click ${args?.selector}` :
+                  tool === 'type' ? `type "${args?.text}" into ${args?.selector}` :
+                  tool === 'scroll' ? `scroll ${args?.y} pixels` :
+                  tool === 'screenshot' ? `take screenshot` :
+                  tool === 'pressEnter' ? `press Enter key` :
+                  tool === 'search' ? `search for "${args?.query}" in ${args?.selector}` :
+                  tool === 'cli' ? `execute CLI: ${args?.command} ${args?.args?.join(' ') || ''}` :
+                  tool === 'cliHelp' ? `get help for CLI: ${args?.command}` :
+                  tool === 'cliList' ? `list CLI processes` :
+                  tool === 'cliKill' ? `kill process ${args?.processId}` :
+                  tool === 'qloodList' ? `list qlood files` :
+                  tool === 'qloodRead' ? `read file ${args?.path}` :
+                  tool === 'qloodWrite' ? `write to file ${args?.path}` :
+                  tool === 'qloodDelete' ? `delete file ${args?.path}` :
+                  `perform ${tool}`} but failed: ${toolResult?.error}`;
+  } else {
+    actionDesc = tool === 'goto' ? `navigated to ${args?.url}` :
+                 tool === 'click' ? `clicked ${args?.selector}` :
+                 tool === 'type' ? `typed "${args?.text}" into ${args?.selector}` :
+                 tool === 'scroll' ? `scrolled ${args?.y} pixels` :
+                 tool === 'screenshot' ? `took screenshot` :
+                 tool === 'pressEnter' ? `pressed Enter key` :
+                 tool === 'search' ? `searched for "${args?.query}" in ${args?.selector}` :
+                 tool === 'cli' ? `executed CLI: ${args?.command} ${args?.args?.join(' ') || ''}` :
+                 tool === 'cliHelp' ? `got help for CLI: ${args?.command}` :
+                 tool === 'cliList' ? `listed files: ${toolResult?.files ? toolResult.files.join(', ') : 'none'}` :
+                 tool === 'cliKill' ? `killed process ${args?.processId}` :
+                 tool === 'qloodList' ? `found ${toolResult?.files?.length || 0} files: ${toolResult?.files?.join(', ') || 'none'}` :
+                 tool === 'qloodRead' ? `read file ${toolResult?.path}: ${(toolResult?.content || '').substring(0, 100)}${toolResult?.content?.length > 100 ? '...' : ''}` :
+                 tool === 'qloodWrite' ? `wrote ${toolResult?.bytes || 0} bytes to ${toolResult?.path}` :
+                 tool === 'qloodDelete' ? `deleted ${toolResult?.path}` :
+                 `performed ${tool}`;
+  }
   actionHistory.push(actionDesc);
   }
 }

@@ -32,7 +32,7 @@ export function setApiKey(key) {
 }
 
 export function getModel() {
-  return 'google/gemini-2.0-flash-001';
+  return 'moonshotai/kimi-k2';
 }
 
 export function getApiKey() {

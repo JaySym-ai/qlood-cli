@@ -9,6 +9,17 @@ export class CliExecutor {
     this.nextId = 1;
   }
 
+  _escapeArgs(args) {
+    return args.map(arg => {
+      // If argument contains special shell characters, quote it
+      if (/[|()\[\]{};'"\\$`<>&*?\s]/.test(arg)) {
+        // Escape single quotes within the argument and wrap in single quotes
+        return `'${arg.replace(/'/g, "'\"'\"'")}'`;
+      }
+      return arg;
+    }).join(' ');
+  }
+
   async executeCommand(command, options = {}) {
     const {
       args = [],
@@ -31,7 +42,7 @@ export class CliExecutor {
   }
 
   async _executeSync(command, args, { cwd, timeout, env, shell }) {
-    const fullCommand = shell ? `${command} ${args.join(' ')}` : command;
+    const fullCommand = shell ? `${command} ${this._escapeArgs(args)}` : command;
     
     try {
       const { stdout, stderr } = await Promise.race([
@@ -98,7 +109,7 @@ export class CliExecutor {
 
       this.processes.set(processId, {
         process: child,
-        command: `${command} ${args.join(' ')}`,
+        command: `${command} ${this._escapeArgs(args)}`,
         startTime: Date.now()
       });
 
@@ -106,7 +117,7 @@ export class CliExecutor {
       resolve({
         success: true,
         processId,
-        message: `Background process started: ${command} ${args.join(' ')}`
+        message: `Background process started: ${command} ${this._escapeArgs(args)}`
       });
     });
   }

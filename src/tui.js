@@ -102,8 +102,11 @@ export async function runTui() {
       border: { fg: theme.dim },
     },
     name: 'input',
-    padding: { left: 1, right: 1 },
+    padding: { left: 1, right: 1, top: 0, bottom: 0 },
     shadow: true,
+    // These properties can help with cursor positioning
+    scrollable: false,
+    wrap: false,
   });
 
   screen.append(header);
