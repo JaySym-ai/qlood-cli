@@ -180,10 +180,23 @@ export async function runTui() {
       ? `{${theme.accent}-fg}${spinnerFrames[spinnerIndex]} Working...{/}`
       : `{${theme.dim}-fg}Idle{/}`;
     const brand = `{bold}${gradientText(' qlood ')}{/}`;
+    // Show a different tip when no workflows exist yet
+    let hasWorkflows = false;
+    try {
+      const base = getProjectDir(process.cwd());
+      const d = path.join(base, 'workflows');
+      if (fs.existsSync(d)) {
+        const files = fs.readdirSync(d);
+        if (files.some(f => /^(\d+)[-_].+\.md$/.test(f))) { hasWorkflows = true; }
+      }
+    } catch {}
+    const tip = hasWorkflows
+      ? ` {${theme.dim}-fg}Use {/}{bold}/wf <id>{/}{${theme.dim}-fg} or {/}{bold}/help{/}{${theme.dim}-fg}. Commands must start with {/}{bold}/{/}{${theme.dim}-fg}.{/}`
+      : ` {${theme.dim}-fg}Create your first workflow using {/}{bold}/wfadd <description>{/}{${theme.dim}-fg}. Commands must start with {/}{bold}/{/}{${theme.dim}-fg}.{/}`;
     header.setContent(
       `${brand} {${theme.dim}-fg}AI Test Runner{/}\n` +
       ` ${state}   ${keyState}\n` +
-      ` {${theme.dim}-fg}Use {/}{bold}/wf <id>{/}{${theme.dim}-fg} or {/}{bold}/help{/}{${theme.dim}-fg}. Commands must start with {/}{bold}/{/}{${theme.dim}-fg}.{/}`
+      tip
     );
   }
 
@@ -317,7 +330,18 @@ export async function runTui() {
   } else {
     addLog('Type {bold}/help{/} for available commands.');
     addLog('Tip: Commands must start with {bold}/{/}.');
-    addLog('Tip: /wf <id> runs a workflow. Use {bold}/wfls{/} to list workflows.');
+    // Tip depends on existing workflows
+    try {
+      const wfDir = path.join(getProjectDir(process.cwd()), 'workflows');
+      const hasWfs = fs.existsSync(wfDir) && fs.readdirSync(wfDir).some(f => /^(\d+)-.+\.md$/.test(f));
+      if (hasWfs) {
+        addLog('Tip: /wf <id> runs a workflow. Use {bold}/wfls{/} to list workflows.');
+      } else {
+        addLog('Tip: Create your first workflow using {bold}/wfadd <description>{/}.');
+      }
+    } catch {
+      addLog('Tip: /wf <id> runs a workflow. Use {bold}/wfls{/} to list workflows.');
+    }
   }
 
   // If project isn't initialized, prompt to initialize (only if authenticated)
@@ -364,10 +388,11 @@ export async function runTui() {
 
   // Loading animation helper - operates on the main log widget
   function startLoadingAnimation(message) {
-    if (SIMPLE_OUTPUT) { addLog(`{cyan-fg}${message}{/}`); return; }
+    // Always show a small animated spinner in the log while working
     const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let frameIndex = 0;
     addLog(`{cyan-fg}${frames[0]} ${message}{/}`);
+    if (loadingInterval) { clearInterval(loadingInterval); loadingInterval = null; }
     loadingInterval = setInterval(() => {
       const content = log.getContent();
       const lines = content.split('\n');
@@ -381,7 +406,6 @@ export async function runTui() {
   }
 
   function stopLoadingAnimation(finalMessage, isSuccess = true) {
-    if (SIMPLE_OUTPUT) { addLog(isSuccess ? `{green-fg}${finalMessage}{/}` : `{yellow-fg}${finalMessage}{/}`); return; }
     if (loadingInterval) {
       clearInterval(loadingInterval);
       loadingInterval = null;
@@ -393,7 +417,13 @@ export async function runTui() {
         lines[lines.length - 1] = `{${color}}${icon} ${finalMessage}{/}`;
         log.setContent(lines.join('\n'));
         screen.render();
+      } else {
+        // Fallback if there was nothing to animate
+        addLog(isSuccess ? `{green-fg}${finalMessage}{/}` : `{yellow-fg}${finalMessage}{/}`);
       }
+    } else {
+      // If no animation was running, still show a final message
+      addLog(isSuccess ? `{green-fg}${finalMessage}{/}` : `{yellow-fg}${finalMessage}{/}`);
     }
   }
 
@@ -701,10 +731,13 @@ export async function runTui() {
           showToast('Login required', 'error');
           return;
         }
+        startLoadingAnimation('Creating workflow with Auggie...');
         try {
           const { id, file } = await addWorkflow(desc);
+          stopLoadingAnimation('Workflow created', true);
           addLog(`{green-fg}Workflow created{/}: ${file} (id: ${id})`);
         } catch (e) {
+          stopLoadingAnimation(`wfadd error: ${e?.message || e}`, false);
           addLog(`{red-fg}wfadd error:{/} ${e?.message || e}`);
         }
       } else if (cmd.startsWith('/wfdel ')) {
@@ -726,10 +759,13 @@ export async function runTui() {
           showToast('Login required', 'error');
           return;
         }
+        startLoadingAnimation('Updating workflow with Auggie...');
         try {
           const res = await updateWorkflow(id);
+          stopLoadingAnimation(res.updated ? 'Workflow updated' : 'No changes applied', res.updated);
           addLog(res.updated ? `{green-fg}Workflow updated{/}: ${res.file}` : `{yellow-fg}No changes applied{/}: ${res.file}`);
         } catch (e) {
+          stopLoadingAnimation(`wdupdate error: ${e?.message || e}`, false);
           addLog(`{red-fg}wdupdate error:{/} ${e?.message || e}`);
         }
       } else if (cmd === '/wfls') {
@@ -737,8 +773,21 @@ export async function runTui() {
         if (!items.length) { addLog('No workflows found. Use /wfadd to create one.'); }
         for (const it of items) addLog(`- ${it.id}: ${it.name} (${it.file})`);
       } else if (cmd.startsWith('/wf ')) {
-        const id = Number(cmd.replace('/wf ', '').trim());
-        if (!id) return addLog('Usage: /wf <id>');
+        const idText = cmd.replace('/wf ', '').trim();
+        const id = Number(idText);
+        const items = listWorkflows();
+        if (!items.length) {
+          addLog('{yellow-fg}No workflows found in ./.qlood/workflows.{/}');
+          addLog('Create one with: {bold}/wfadd <short description>{/}');
+          addLog('Example: {cyan-fg}/wfadd User signup and login{/}');
+          addLog('Then run it with: {cyan-fg}/wf 1{/}');
+          return;
+        }
+        if (!id) {
+          addLog('Usage: /wf <id>');
+          addLog('Tip: list available workflows with {bold}/wfls{/}');
+          return;
+        }
         showWorking();
         try {
           await runWorkflow(id, { headless: getHeadlessMode(), debug: false, onLog: (m) => addLog(m) });
@@ -758,6 +807,30 @@ export async function runTui() {
         } finally {
           hideWorking();
         }
+      } else if (cmd === '/clean') {
+        try {
+          const base = getProjectDir(process.cwd());
+          const targets = ['debug', 'notes', 'results'].map(d => path.join(base, d));
+          let removed = 0;
+          for (const dir of targets) {
+            if (!fs.existsSync(dir)) continue;
+            const entries = fs.readdirSync(dir);
+            for (const name of entries) {
+              const p = path.join(dir, name);
+              try {
+                fs.rmSync(p, { recursive: true, force: true });
+                removed++;
+              } catch (e) {
+                addLog(`{yellow-fg}Warning{/}: failed to remove ${path.relative(process.cwd(), p)} - ${e.message}`);
+              }
+            }
+          }
+          addLog(`{green-fg}Cleaned{/} ${removed} item(s) from {bold}.qlood/debug{/}, {bold}.qlood/notes{/}, and {bold}.qlood/results{/}.`);
+          showToast('Workspace cleaned', 'success');
+        } catch (e) {
+          addLog(`{red-fg}clean error:{/} ${e?.message || e}`);
+          showToast('Clean failed', 'error');
+        }
       } else if (cmd === '/help') {
         addLog('{bold}Commands:{/}');
         addLog('  {cyan-fg}/key <apiKey>{/} - Set your OpenRouter API key for AI features');
@@ -769,6 +842,7 @@ export async function runTui() {
         addLog('  {cyan-fg}/wdupdate <id>{/} - Update workflow to match code changes');
         addLog('  {cyan-fg}/wfdel <id>{/} - Delete a workflow');
         addLog('  {cyan-fg}/context [--update]{/} - View or update project context');
+        addLog('  {cyan-fg}/clean{/} - Delete all files under ./.qlood/debug, ./.qlood/notes, ./.qlood/results');
         addLog('  {cyan-fg}/quit{/} - Exit qlood');
         addLog('');
         addLog('All input must start with {bold}/{/} (e.g., {cyan-fg}/wf 1{/}).');
@@ -804,10 +878,10 @@ export async function runTui() {
         if (wantsUpdate) {
           const authResult = await checkAuthentication();
           if (authResult.success && authResult.authenticated) {
-            showWorking();
-            addLog('{cyan-fg}Updating project context with Auggie...{/}');
+            startLoadingAnimation('Updating project context with Auggie... This may take several minutes.');
             try {
               const ok = await generateProjectContext(cwd, { silent: true });
+              stopLoadingAnimation(ok ? 'Project context updated' : 'Failed to update project context', ok);
               if (ok) {
                 addLog('{green-fg}✓ Project context updated{/}');
                 showToast('Context updated', 'success');
@@ -816,10 +890,9 @@ export async function runTui() {
                 showToast('Context update failed', 'error');
               }
             } catch (e) {
+              stopLoadingAnimation(`Context update error: ${e?.message || e}`, false);
               addLog(`{red-fg}Context update error:{/} ${e?.message || e}`);
               showToast('Context update error', 'error');
-            } finally {
-              hideWorking();
             }
           } else {
             addLog('{red-fg}❌ Authentication required to update context.{/}');

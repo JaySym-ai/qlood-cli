@@ -340,11 +340,6 @@ export class AuggieIntegration {
     if (options.usePrintFormat) {
       args.push('--print', prompt);
     } else {
-      // Add context if provided (legacy format)
-      if (options.context) {
-        args.push('--context', options.context);
-      }
-
       // Add any additional flags
       if (options.flags) {
         args.push(...options.flags);

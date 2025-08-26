@@ -3,6 +3,7 @@ import path from 'path';
 import { ensureProjectDirs, getProjectDir } from './project.js';
 import { executeCustomPrompt, checkAuthentication } from './auggie-integration.js';
 import { runProjectTest } from './test.js';
+import { buildWorkflowPrompt } from './prompts/prompt.workflow.js';
 
 function slugify(text) {
   return String(text)
@@ -13,19 +14,28 @@ function slugify(text) {
 }
 
 export function getWorkflowsDir(cwd = process.cwd()) {
+  // Primary directory (plural)
   const base = ensureProjectDirs(cwd);
   const dir = path.join(base, 'workflows');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
+
 export function listWorkflows(cwd = process.cwd()) {
   const dir = getWorkflowsDir(cwd);
-  const files = fs.readdirSync(dir).filter(f => /^(\d+)-.+\.md$/.test(f));
-  const items = files.map(f => {
-    const m = f.match(/^(\d+)-(.+)\.md$/);
-    return { id: Number(m[1]), file: f, name: m[2].replace(/-/g, ' ') };
-  }).sort((a, b) => a.id - b.id);
+  const items = [];
+  if (fs.existsSync(dir)) {
+    const files = fs.readdirSync(dir).filter(f => /^(\d+)[-_].+\.md$/.test(f));
+    for (const f of files) {
+      const m = f.match(/^(\d+)[-_](.+)\.md$/);
+      const id = Number(m[1]);
+      const name = m[2].replace(/-/g, ' ');
+      items.push({ id, file: f, name, dir });
+    }
+  }
+  // Sort by id, then filename
+  items.sort((a, b) => (a.id - b.id) || a.file.localeCompare(b.file));
   return items;
 }
 
@@ -45,19 +55,12 @@ export async function addWorkflow(description, { cwd = process.cwd() } = {}) {
 
   const id = nextWorkflowId(cwd);
   const name = slugify(description);
-  const file = `${id}-${name}.md`;
-  const outPath = path.join(getWorkflowsDir(cwd), file);
+  const file = `${id}_${name}.md`;
+  const outDir = getWorkflowsDir(cwd);
+  const outPath = path.join(outDir, file);
 
-  const prompt = `You are generating an end-to-end web testing workflow for Qlood.
-Project context: The assistant will use a headless browser to execute steps.
-Task: Create a clear, step-by-step test plan to accomplish: "${description}".
-Guidelines:
-- Use concise Markdown with numbered steps and clear assertions.
-- Include preconditions if needed and expected results where useful.
-- Prefer user-visible actions (clicks, typing, navigation).
-- Avoid environment-specific values when possible.
-- Title with a concise H1.
-Output: Markdown only.`;
+  // Compose a workflow-specific prompt oriented for Playwright
+  const prompt = buildWorkflowPrompt(description);
 
   const res = await executeCustomPrompt(prompt, { usePrintFormat: true, timeout: 120000 });
   const content = (res.success ? res.stdout : '').trim();
@@ -69,7 +72,7 @@ Output: Markdown only.`;
 export async function updateWorkflow(id, { cwd = process.cwd() } = {}) {
   const wf = listWorkflows(cwd).find(w => w.id === Number(id));
   if (!wf) throw new Error(`Workflow ${id} not found`);
-  const p = path.join(getWorkflowsDir(cwd), wf.file);
+  const p = path.join(wf.dir, wf.file);
 
   const auth = await checkAuthentication();
   if (!auth.success || !auth.authenticated) {
@@ -90,7 +93,7 @@ export async function updateWorkflow(id, { cwd = process.cwd() } = {}) {
 export function deleteWorkflow(id, { cwd = process.cwd() } = {}) {
   const wf = listWorkflows(cwd).find(w => w.id === Number(id));
   if (!wf) throw new Error(`Workflow ${id} not found`);
-  const p = path.join(getWorkflowsDir(cwd), wf.file);
+  const p = path.join(wf.dir, wf.file);
   fs.rmSync(p, { force: true });
   return { file: wf.file };
 }
@@ -121,6 +124,8 @@ function copyIfExists(src, dest) {
   try { if (fs.existsSync(src)) fs.copyFileSync(src, dest); } catch {}
 }
 
+
+
 function readContains(p, substr) {
   try {
     if (!fs.existsSync(p)) return false;
@@ -136,7 +141,7 @@ export async function runWorkflow(id, { headless, debug, onLog } = {}) {
   const cwd = process.cwd();
   const wf = listWorkflows(cwd).find(w => w.id === Number(id));
   if (!wf) throw new Error(`Workflow ${id} not found`);
-  const p = path.join(getWorkflowsDir(cwd), wf.file);
+  const p = path.join(wf.dir, wf.file);
   const scenario = fs.readFileSync(p, 'utf-8');
 
   const { dir, success, warning, error } = createResultStructure(id, cwd);

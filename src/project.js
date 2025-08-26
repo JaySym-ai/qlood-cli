@@ -15,6 +15,7 @@ export function ensureProjectDirs(cwd = process.cwd()) {
     path.join(base, 'notes'),
     path.join(base, 'screenshots'),
     path.join(base, 'results'),
+    // Canonical directory for workflows
     path.join(base, 'workflows'),
   ];
   for (const d of dirs) {
@@ -397,13 +398,7 @@ export async function ensureProjectInit({ cwd = process.cwd(), force = false, sk
   let wasInitialized = false;
 
   if (!fs.existsSync(p) || force) {
-    // Migration: remove legacy ./.qlood/runs if present and ensure ./.qlood/results exists
-    try {
-      const legacyRuns = path.join(base, 'runs');
-      if (fs.existsSync(legacyRuns)) {
-        fs.rmSync(legacyRuns, { recursive: true, force: true });
-      }
-    } catch {}
+    // Ensure ./.qlood/results exists
     try { fs.mkdirSync(path.join(base, 'results'), { recursive: true }); } catch {}
 
     const detected = detectProjectConfig(cwd);

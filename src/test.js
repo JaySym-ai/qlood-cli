@@ -24,7 +24,7 @@ async function waitForHttp(url, { timeoutMs = 30000, intervalMs = 1000 } = {}) {
   return false;
 }
 
-export async function runProjectTest(goal, { headless, debug, onLog } = {}) {
+export async function runProjectTest(goal, { headless, debug, onLog, artifactsDir } = {}) {
   const cwd = process.cwd();
   // Don't skip context here - let it run normally for test command
   await ensureProjectInit({ cwd });
@@ -33,8 +33,10 @@ export async function runProjectTest(goal, { headless, debug, onLog } = {}) {
 
   const projectDir = ensureProjectDirs(cwd);
   const runId = new Date().toISOString().replace(/[:.]/g, '-');
-  const runDir = path.join(projectDir, 'results', runId);
+  const runDir = artifactsDir || path.join(projectDir, 'results', runId);
   fs.mkdirSync(runDir, { recursive: true });
+
+  const runLabel = path.basename(runDir);
 
   const log = (m) => { if (onLog) onLog(m); else console.log(m); };
 
@@ -113,8 +115,8 @@ export async function runProjectTest(goal, { headless, debug, onLog } = {}) {
   await gotoCmd(page, baseUrl, { silent: true });
   try { await page.waitForTimeout(500); } catch {}
 
-  // Save initial screenshot
-  const initialShot = path.join(projectDir, 'screenshots', `${runId}-initial.png`);
+  // Save initial screenshot into run directory
+  const initialShot = path.join(runDir, 'initial.png');
   try { await page.screenshot({ path: initialShot, fullPage: true }); } catch {}
 
   // Run the AI-driven test scenario
@@ -126,9 +128,9 @@ export async function runProjectTest(goal, { headless, debug, onLog } = {}) {
       try { fs.appendFileSync(path.join(runDir, 'agent.log'), line + '\n'); } catch {}
     }});
   } finally {
-    // Save final screenshot
+    // Save final screenshot into run directory
     try {
-      const finalShot = path.join(projectDir, 'screenshots', `${runId}-final.png`);
+      const finalShot = path.join(runDir, 'final.png');
       await page.screenshot({ path: finalShot, fullPage: true });
     } catch {}
   }
@@ -146,11 +148,11 @@ export async function runProjectTest(goal, { headless, debug, onLog } = {}) {
   <li><b>Healthcheck:</b> ${readyPath}</li>
   <li><b>Headless:</b> ${String(headless ?? cfg.browser?.headless ?? false)}</li>
   <li><b>Artifacts dir:</b> ${runDir}</li>
-  <li><b>Initial screenshot:</b> .qlood/screenshots/${path.basename(initialShot)}</li>
-  <li><b>Final screenshot:</b> .qlood/screenshots/${runId}-final.png</li>
-  <li><b>Agent log:</b> ${path.join('.qlood','results',runId,'agent.log')}</li>
-  <li><b>Browser log:</b> ${path.join('.qlood','results',runId,'browser.log')}</li>
-  <li><b>Network log:</b> ${path.join('.qlood','results',runId,'network.log')}</li>
+  <li><b>Initial screenshot:</b> ${path.join('.qlood','results',runLabel,'initial.png')}</li>
+  <li><b>Final screenshot:</b> ${path.join('.qlood','results',runLabel,'final.png')}</li>
+  <li><b>Agent log:</b> ${path.join('.qlood','results',runLabel,'agent.log')}</li>
+  <li><b>Browser log:</b> ${path.join('.qlood','results',runLabel,'browser.log')}</li>
+  <li><b>Network log:</b> ${path.join('.qlood','results',runLabel,'network.log')}</li>
   </ul>
 <p>Open the artifacts locally to inspect details.</p>
 `;
