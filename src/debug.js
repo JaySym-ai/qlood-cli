@@ -60,9 +60,8 @@ export class DebugLogger {
     const debugFileName = `debug-${this.sessionId}.txt`;
     this.debugFile = path.join(debugDir, debugFileName);
 
-    // Initialize debug file
-    this.writeDebug('DEBUG SESSION STARTED', {
-      sessionId: this.sessionId,
+    // Initialize debug file (compact, no session id)
+    this.writeDebug('SESSION_START', {
       timestamp: new Date().toISOString(),
       workingDirectory: projectPath,
       nodeVersion: process.version,
@@ -70,14 +69,14 @@ export class DebugLogger {
     });
 
     if (!silent) {
-      console.log(`🐛 Debug logging enabled. Session: ${this.sessionId}`);
+      console.log(`🐛 Debug logging enabled.`);
     }
   }
 
   disable() {
     if (!this.debugEnabled) return;
 
-    this.writeDebug('DEBUG SESSION ENDED', {
+    this.writeDebug('SESSION_END', {
       timestamp: new Date().toISOString(),
       totalSteps: this.stepCounter
     });
@@ -106,10 +105,16 @@ export class DebugLogger {
     const timestamp = new Date().toISOString();
     const step = ++this.stepCounter;
 
-    const logLine = `\n${'='.repeat(80)}\nSTEP ${step} | ${timestamp} | ${category}\n${'='.repeat(80)}\n${JSON.stringify(data, null, 2)}\n`;
+    // Compact JSONL entry: one line, minimal metadata
+    const entry = {
+      ts: timestamp,
+      step,
+      cat: category,
+      ...(data || {})
+    };
 
     try {
-      fs.appendFileSync(this.debugFile, logLine);
+      fs.appendFileSync(this.debugFile, JSON.stringify(entry) + '\n');
     } catch (error) {
       console.error('Failed to write debug log:', error.message);
     }
@@ -120,24 +125,33 @@ export class DebugLogger {
       goal,
       model,
       promptLength: prompt.length,
-      toolsAvailable: tools.map(t => t.name),
-      sanitizedPrompt: this.truncate(prompt, 1000)
+      toolsAvailable: tools.map(t => t.name)
     });
   }
 
   logAgentResponse(response, parsedPlan) {
     this.writeDebug('AGENT_RESPONSE', {
       rawResponseLength: response.length,
-      rawResponse: this.truncate(response, 500),
-      parsedPlan,
       parseSuccess: !!parsedPlan
     });
   }
 
   logToolExecution(toolName, args, startTime) {
+    // Shallow-truncate long string args to keep logs compact
+    const safeArgs = {};
+    try {
+      for (const [k, v] of Object.entries(args || {})) {
+        if (typeof v === 'string') {
+          safeArgs[k] = this.truncate(v, 200);
+        } else {
+          safeArgs[k] = v;
+        }
+      }
+    } catch (_) {}
+
     this.writeDebug('TOOL_EXECUTION_START', {
       tool: toolName,
-      args,
+      args: safeArgs,
       startTime: startTime.toISOString()
     });
   }
@@ -146,11 +160,28 @@ export class DebugLogger {
     const endTime = new Date();
     const duration = endTime - startTime;
 
+    // Summarize potentially large result payloads
+    let summarized = null;
+    if (result && typeof result === 'object') {
+      const output = typeof result.output === 'string' ? result.output : '';
+      const errText = typeof result.error === 'string' ? result.error : '';
+      summarized = {
+        success: result.success,
+        exitCode: result.exitCode,
+        processId: result.processId,
+        outputLength: output ? output.length : undefined,
+        errorLength: errText ? errText.length : undefined,
+        outputPreview: output ? this.truncate(output, 200) : undefined,
+        errorPreview: errText ? this.truncate(errText, 200) : undefined,
+      };
+      Object.keys(summarized).forEach(k => summarized[k] === undefined && delete summarized[k]);
+    }
+
     this.writeDebug('TOOL_EXECUTION_END', {
       tool: toolName,
-      duration: `${duration}ms`,
-      success: !error,
-      result: error ? null : result,
+      durationMs: duration,
+      success: !error && (result?.success !== false),
+      result: error ? null : summarized,
       error: error ? error.message : null,
       endTime: endTime.toISOString()
     });
@@ -203,9 +234,11 @@ export class DebugLogger {
   }
 
   logSystemOutput(output, type = 'info') {
+    const text = typeof output === 'string' ? output : String(output ?? '');
     this.writeDebug('SYSTEM_OUTPUT', {
-      output,
       type,
+      length: text.length,
+      preview: this.truncate(text, 300),
       timestamp: new Date().toISOString()
     });
   }

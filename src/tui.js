@@ -8,9 +8,10 @@ import { runAgent, cancelAgentRun } from './agent.js';
 import { debugLogger } from './debug.js';
 import { ensureProjectInit, loadProjectConfig, getProjectStructurePath, saveProjectStructure, scanProject, generateProjectContext, getProjectDir } from './project.js';
 import { checkAuthentication } from './auggie-integration.js';
-import { runProjectTest } from './test.js';
+
 import { addWorkflow, runWorkflow, runAllWorkflows, updateWorkflow, deleteWorkflow, listWorkflows } from './workflows.js';
 
+import { getMetrics, onMetricsUpdate } from './metrics.js';
 export async function runTui() {
   // Auto-enable debug logging for this session
   debugLogger.autoEnable(process.cwd());
@@ -156,7 +157,7 @@ export async function runTui() {
   // Loading overlay
   let loadingOverlay = null;
   let loadingSpinnerTimer = null;
-  
+
   function colorCycle(colors) {
     return colors[(headerHue) % colors.length];
   }
@@ -182,7 +183,7 @@ export async function runTui() {
     header.setContent(
       `${brand} {${theme.dim}-fg}AI Test Runner{/}\n` +
       ` ${state}   ${keyState}\n` +
-      ` {${theme.dim}-fg}Use {/}{bold}/test <scenario>{/}{${theme.dim}-fg} or {/}{bold}/help{/}{${theme.dim}-fg}. Commands must start with {/}{bold}/{/}{${theme.dim}-fg}.{/}`
+      ` {${theme.dim}-fg}Use {/}{bold}/wf <id>{/}{${theme.dim}-fg} or {/}{bold}/help{/}{${theme.dim}-fg}. Commands must start with {/}{bold}/{/}{${theme.dim}-fg}.{/}`
     );
   }
 
@@ -190,7 +191,7 @@ export async function runTui() {
     log.add(message);
     log.setScrollPerc(100);
     screen.render();
-    
+
     // Log system output for debug (strip color codes for cleaner log)
     const cleanMessage = message.replace(/\{[^}]*\}/g, '');
     debugLogger.logSystemOutput(cleanMessage, 'info');
@@ -251,7 +252,7 @@ export async function runTui() {
         spinnerIndex = (spinnerIndex + 1) % spinnerFrames.length;
         renderHeader();
         if (workingLogLine) workingLogLine.setContent(`{${theme.accent}-fg}${spinnerFrames[spinnerIndex]}{/} {dim}Working...{/}`);
-        if (spinnerIndex % 4 === 0) { dotCount = dotCount >= 3 ? 0 : dotCount + 1; log.setLabel(` qlood - Working${'.'.repeat(dotCount)} `);} 
+        if (spinnerIndex % 4 === 0) { dotCount = dotCount >= 3 ? 0 : dotCount + 1; log.setLabel(` qlood - Working${'.'.repeat(dotCount)} `);}
         if (spinnerIndex % 5 === 0) { pulseState = !pulseState; statusBar.style.fg = pulseState ? theme.accent : theme.dim; }
         screen.render();
       }, 120);
@@ -316,7 +317,7 @@ export async function runTui() {
   } else {
     addLog('Type {bold}/help{/} for available commands.');
     addLog('Tip: Commands must start with {bold}/{/}.');
-    addLog('Tip: /test runs an AI test. If not initialized, we will prompt you.');
+    addLog('Tip: /wf <id> runs a workflow. Use {bold}/wfls{/} to list workflows.');
   }
 
   // If project isn't initialized, prompt to initialize (only if authenticated)
@@ -426,7 +427,7 @@ export async function runTui() {
         addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
       }
 
-      addLog('You can now run a test with {bold}/test <your scenario>{/}.');
+      addLog('You can now run a workflow with {bold}/wf <id>{/}.');
       showToast('Project initialized', 'success');
       expectingInitConfirm = false;
     }
@@ -471,7 +472,7 @@ export async function runTui() {
     if (expectingInitConfirm) {
       addLog('{red-fg}Initialization declined. Exiting qlood...{/}');
       showToast('Initialization declined', 'warn');
-      setTimeout(() => { screen.destroy(); process.exit(0); }, 300);
+      setTimeout(() => { teardownAndExit(0); }, 300);
       return;
     }
     if (expectingStructureUpdateConfirm) {
@@ -486,10 +487,32 @@ export async function runTui() {
   function renderStatus() {
     const now = new Date();
     const clock = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    statusBar.setContent(`{${theme.dim}-fg}Keys:{/} Enter run  •  Up/Down history  •  Ctrl+C cancel  •  q quit  •  F1 help  •  Ctrl+K palette {${theme.dim}-fg}| ${clock}{/}`);
+    const { llmCalls, auggieCalls, toolCalls, lastTool } = getMetrics();
+    const lastToolText = lastTool ? ` (last: ${lastTool})` : '';
+    statusBar.setContent(`{${theme.dim}-fg}Stats:{/} LLM ${llmCalls}  •  Auggie ${auggieCalls}  •  Tools ${toolCalls}${lastToolText}  {${theme.dim}-fg}| ${clock}{/}`);
   }
   renderHeader();
   renderStatus();
+
+  // Live status updates: refresh clock every second, and react to metrics updates
+  let statusTick = setInterval(() => {
+    renderStatus();
+    screen.render();
+  }, 1000);
+  const unsubscribeMetrics = onMetricsUpdate(() => {
+    renderStatus();
+    screen.render();
+  });
+
+  function teardownAndExit(code = 0) {
+    try { if (statusTick) clearInterval(statusTick); } catch {}
+    try { if (unsubscribeMetrics) unsubscribeMetrics(); } catch {}
+    try { if (headerAnimTimer) clearInterval(headerAnimTimer); } catch {}
+    try { if (spinnerTimer) clearInterval(spinnerTimer); } catch {}
+    try { if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer); } catch {}
+    screen.destroy();
+    process.exit(code);
+  }
 
   // Header idle animation (gentle)
   function startHeaderAnim() {
@@ -516,7 +539,7 @@ export async function runTui() {
     if (!cmd) return;
     history.push(cmd);
     histIndex = history.length;
-    
+
     // Log user input for debug
     debugLogger.logUserInput(cmd, 'TUI');
 
@@ -549,7 +572,7 @@ export async function runTui() {
             addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
           }
 
-          addLog('You can now run a test with {bold}/test <your scenario>{/}.');
+          addLog('You can now run a workflow with {bold}/wf <id>{/}.');
           showToast('Project initialized', 'success');
           expectingInitConfirm = false;
           return;
@@ -557,7 +580,7 @@ export async function runTui() {
           addLog('{red-fg}Initialization declined. Exiting qlood...{/}');
           showToast('Initialization declined', 'warn');
           // small delay to allow user to read
-          setTimeout(() => { screen.destroy(); process.exit(0); }, 300);
+          setTimeout(() => { teardownAndExit(0); }, 300);
           return;
         } else {
           addLog('Please answer with y or n.');
@@ -737,28 +760,19 @@ export async function runTui() {
         }
       } else if (cmd === '/help') {
         addLog('{bold}Commands:{/}');
-        addLog('  {cyan-fg}/key <apiKey>{/}');
-        addLog('  {cyan-fg}/prompt <main prompt>{/}');
-        addLog('  {cyan-fg}/instructions <system instructions>{/}');
-        addLog('  {cyan-fg}/headless{/}');
-        addLog('  {cyan-fg}/open <url>{/}');
-        addLog('  {cyan-fg}/goto <url>{/}');
-        addLog('  {cyan-fg}/click <selector>{/}');
-        addLog('  {cyan-fg}/type <selector> <text>{/}');
-        addLog('  {cyan-fg}/wfadd <description>{/}');
-        addLog('  {cyan-fg}/wfls{/}');
-        addLog('  {cyan-fg}/wf <id>{/}');
-        addLog('  {cyan-fg}/wfall{/}');
-        addLog('  {cyan-fg}/wdupdate <id>{/}');
-        addLog('  {cyan-fg}/wfdel <id>{/}');
-        addLog('  {cyan-fg}/context [--update]{/}');
-        addLog('  {cyan-fg}/tools{/}');
-        addLog('  {cyan-fg}/test <scenario>{/}');
-        addLog('  {cyan-fg}/auggie-login{/} - Guide for Auggie authentication');
-        addLog('  {cyan-fg}/quit{/}');
+        addLog('  {cyan-fg}/key <apiKey>{/} - Set your OpenRouter API key for AI features');
+        addLog('  {cyan-fg}/headless{/} - Toggle headless browser mode');
+        addLog('  {cyan-fg}/wfadd <description>{/} - Create a new test workflow');
+        addLog('  {cyan-fg}/wfls{/} - List all available workflows');
+        addLog('  {cyan-fg}/wf <id>{/} - Run a specific workflow by ID');
+        addLog('  {cyan-fg}/wfall{/} - Run all workflows sequentially');
+        addLog('  {cyan-fg}/wdupdate <id>{/} - Update workflow to match code changes');
+        addLog('  {cyan-fg}/wfdel <id>{/} - Delete a workflow');
+        addLog('  {cyan-fg}/context [--update]{/} - View or update project context');
+        addLog('  {cyan-fg}/quit{/} - Exit qlood');
         addLog('');
-        addLog('All input must start with {bold}/{/} (e.g., {cyan-fg}/test "Sign in"{/}).');
-        addLog('{gray-fg}Agent tools:{/} {blue-fg}goto{/}(url), {blue-fg}click{/}(selector), {blue-fg}type{/}(selector,text), {blue-fg}search{/}(selector,query), {blue-fg}pressEnter{/}(), {blue-fg}screenshot{/}(path?), {blue-fg}scroll{/}(y), {blue-fg}cli{/}(command), {blue-fg}done{/}(result)');
+        addLog('All input must start with {bold}/{/} (e.g., {cyan-fg}/wf 1{/}).');
+
       } else if (cmd === '/tools') {
         addLog('Available tools:');
         addLog('  {blue-fg}goto{/}(url): Navigate to URL');
@@ -832,31 +846,8 @@ export async function runTui() {
         } catch (e) {
           addLog(`{red-fg}Error reading context:{/} ${e?.message || e}`);
         }
-      } else if (cmd.startsWith('/test ')) {
-        const authResult = await checkAuthentication();
-        if (!authResult.success || !authResult.authenticated) {
-          addLog(`{red-fg}❌ Authentication required to run tests.{/}`);
-          addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
-          showToast('Login required', 'error');
-          return;
-        }
-
-        const scenario = cmd.replace('/test ', '').trim();
-        if (!scenario) return addLog('Usage: /test <scenario>');
-        showWorking();
-        try {
-          await runProjectTest(scenario, { debug: false, headless: getHeadlessMode(), onLog: (m) => addLog(m) });
-          addLog('{green-fg}Test completed{/}');
-          showToast('Test completed', 'success');
-        } catch (e) {
-          addLog(`{red-fg}Test error:{/} ${e?.message || e}`);
-          showToast('Test error', 'error');
-        } finally {
-          hideWorking();
-        }
       } else if (cmd === '/quit') {
-        screen.destroy();
-        process.exit(0);
+        teardownAndExit(0);
       } else {
         // Free text is not accepted: show help automatically
         addLog('{yellow-fg}Commands must start with {/}{bold}/{/}{yellow-fg}. Showing help...{/}');
@@ -925,8 +916,7 @@ export async function runTui() {
       if (headerAnimTimer) clearInterval(headerAnimTimer);
       if (spinnerTimer) clearInterval(spinnerTimer);
       if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
-      screen.destroy();
-      process.exit(0);
+      teardownAndExit(0);
     }
     lastCtrlC = now;
     addLog('{yellow-fg}Cancel requested{/}. Press Ctrl+C again to exit.');
@@ -953,8 +943,7 @@ export async function runTui() {
         if (headerAnimTimer) clearInterval(headerAnimTimer);
         if (spinnerTimer) clearInterval(spinnerTimer);
         if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
-        screen.destroy();
-        process.exit(0);
+        teardownAndExit(0);
       } else {
         lastCtrlC = now;
         addLog('{yellow-fg}Cancel requested via SIGINT{/}. Press Ctrl+C again to exit.');
@@ -967,8 +956,7 @@ export async function runTui() {
     if (headerAnimTimer) clearInterval(headerAnimTimer);
     if (spinnerTimer) clearInterval(spinnerTimer);
     if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
-    screen.destroy();
-    process.exit(0);
+    teardownAndExit(0);
   });
 
   input.focus();

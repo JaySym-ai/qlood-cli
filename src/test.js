@@ -6,6 +6,8 @@ import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 
+import { runAudits } from './audits.js';
+
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function waitForHttp(url, { timeoutMs = 30000, intervalMs = 1000 } = {}) {
@@ -69,6 +71,38 @@ export async function runProjectTest(goal, { headless, debug, onLog } = {}) {
   await createChrome({ headless: headless ?? cfg.browser?.headless ?? false, debug: !!debug });
   const page = await ensurePage();
   // Attach logging for console/network/errors to runDir
+  // Additional listeners for timing and headers (for audits)
+  const detailsPath = path.join(runDir, 'network.details.jsonl');
+  const secHeadersPath = path.join(runDir, 'sec-headers.jsonl');
+  const reqStart = new Map();
+  page.on('request', req => {
+    try { reqStart.set(req.url(), Date.now()); } catch {}
+  });
+  page.on('response', async res => {
+    try {
+      const url = res.url();
+      const started = reqStart.get(url) || Date.now();
+      const finished = Date.now();
+      const durationMs = finished - started;
+      const info = { url, status: res.status(), method: res.request().method(), durationMs };
+      fs.appendFileSync(detailsPath, JSON.stringify(info) + '\n');
+
+      // Capture selected security headers
+      const headers = res.headers();
+      const pick = (k) => headers[k] || headers[k.toLowerCase()] || undefined;
+      const selected = {
+        'content-security-policy': pick('content-security-policy'),
+        'x-frame-options': pick('x-frame-options'),
+        'x-content-type-options': pick('x-content-type-options'),
+        'referrer-policy': pick('referrer-policy'),
+        'strict-transport-security': pick('strict-transport-security'),
+        'permissions-policy': pick('permissions-policy'),
+      };
+      const secLine = { url, status: res.status(), headers: selected };
+      fs.appendFileSync(secHeadersPath, JSON.stringify(secLine) + '\n');
+    } catch {}
+  });
+
   const logPath = path.join(runDir, 'browser.log');
   const netPath = path.join(runDir, 'network.log');
   const append = (p, line) => { try { fs.appendFileSync(p, line + '\n'); } catch {} };

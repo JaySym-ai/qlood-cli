@@ -117,6 +117,21 @@ function createResultStructure(wfId, cwd = process.cwd()) {
   return { dir, success, warning, error };
 }
 
+function copyIfExists(src, dest) {
+  try { if (fs.existsSync(src)) fs.copyFileSync(src, dest); } catch {}
+}
+
+function readContains(p, substr) {
+  try {
+    if (!fs.existsSync(p)) return false;
+    const txt = fs.readFileSync(p, 'utf8');
+    return txt.includes(substr);
+  } catch {
+    return false;
+  }
+}
+
+
 export async function runWorkflow(id, { headless, debug, onLog } = {}) {
   const cwd = process.cwd();
   const wf = listWorkflows(cwd).find(w => w.id === Number(id));
@@ -124,14 +139,55 @@ export async function runWorkflow(id, { headless, debug, onLog } = {}) {
   const p = path.join(getWorkflowsDir(cwd), wf.file);
   const scenario = fs.readFileSync(p, 'utf-8');
 
-  const { dir, success } = createResultStructure(id, cwd);
-  // Delegate to project test runner; it will create artifacts under ./.qlood/results/<ts>
+  const { dir, success, warning, error } = createResultStructure(id, cwd);
+
+  // Delegate to project test runner; it will create artifacts under ./.qlood/results/<runId>
   await runProjectTest(scenario, { headless, debug, onLog });
 
-  // Save a minimal success report referencing artifacts
-  const report = `# Workflow ${id} Result\n\n- Workflow file: ${wf.file}\n- Timestamp dir: ${path.basename(dir)}\n- See ./.qlood/results for detailed artifacts.\n`;
-  fs.writeFileSync(path.join(success, 'report.md'), report);
-  return { resultDir: dir };
+  // Find the latest run artifacts
+  const resultsBase = path.join(getProjectDir(cwd), 'results');
+  const runs = fs.readdirSync(resultsBase).filter(x => /\d{4}-\d{2}-\d{2}T/.test(x)).sort();
+  const latest = runs[runs.length - 1];
+  const runDir = latest ? path.join(resultsBase, latest) : null;
+
+  // Use audits.json to categorize result when available
+  let category = 'success';
+  if (runDir) {
+    const auditsPath = path.join(runDir, 'audits.json');
+    try {
+      if (fs.existsSync(auditsPath)) {
+        const audits = JSON.parse(fs.readFileSync(auditsPath, 'utf8'));
+        category = audits.overall || 'success';
+      }
+    } catch {}
+  }
+
+  const targetFolder = category === 'success' ? success : category === 'warning' ? warning : error;
+
+  // Copy artifacts into the categorized folder
+  if (runDir) {
+    // Copy logs
+    copyIfExists(path.join(runDir, 'agent.log'), path.join(targetFolder, 'agent.log'));
+    copyIfExists(path.join(runDir, 'browser.log'), path.join(targetFolder, 'browser.log'));
+    copyIfExists(path.join(runDir, 'network.log'), path.join(targetFolder, 'network.log'));
+
+    // Copy screenshots if available
+    const screenshotsDir = path.join(getProjectDir(cwd), 'screenshots');
+    try {
+      const files = fs.existsSync(screenshotsDir) ? fs.readdirSync(screenshotsDir) : [];
+      for (const f of files) {
+        if (f.includes('initial') || f.includes('final')) {
+          copyIfExists(path.join(screenshotsDir, f), path.join(targetFolder, f));
+        }
+      }
+    } catch {}
+  }
+
+
+  const report = `# Workflow ${id} Result\n\n- Workflow file: ${wf.file}\n- Run: ${latest || 'n/a'}\n- Category: ${category}\n- Artifacts: ./.qlood/results/${latest || ''}\n`;
+  fs.writeFileSync(path.join(targetFolder, 'report.md'), report);
+
+  return { resultDir: dir, category, runDir };
 }
 
 export async function runAllWorkflows({ headless, debug, onLog } = {}) {

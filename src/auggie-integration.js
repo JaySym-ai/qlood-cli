@@ -1,5 +1,6 @@
 import { spawn, exec } from 'child_process';
 
+import { incAuggieCalls } from './metrics.js';
 /**
  * Auggie CLI Integration Module
  * Provides functions for file operations using the Auggie CLI tool
@@ -24,7 +25,7 @@ export class AuggieIntegration {
         const installResult = await this._executeCommand('npm', ['install', '-g', '@augmentcode/auggie'], {
           timeout: 120000 // 2 minutes for npm install
         });
-        
+
         if (!installResult.success) {
           return {
             success: false,
@@ -104,9 +105,9 @@ export class AuggieIntegration {
    */
   async writeFile(filePath, content, options = {}) {
     try {
-      const prompt = options.prompt || 
+      const prompt = options.prompt ||
         `Write the following content to the file ${filePath}:\n\n${content}`;
-      
+
       const result = await this._executeAuggieCommand(prompt, {
         context: `File operation: write ${filePath}`,
         ...options
@@ -140,9 +141,9 @@ export class AuggieIntegration {
    */
   async updateFile(filePath, instructions, options = {}) {
     try {
-      const prompt = options.prompt || 
+      const prompt = options.prompt ||
         `Update the file ${filePath} with the following instructions:\n\n${instructions}`;
-      
+
       const result = await this._executeAuggieCommand(prompt, {
         context: `File operation: update ${filePath}`,
         ...options
@@ -227,7 +228,8 @@ export class AuggieIntegration {
     try {
       // Try to run a simple command that requires authentication
       const result = await this._executeCommand('auggie', ['--print-augment-token'], {
-        timeout: 5000 // Short timeout for auth check
+        timeout: 5000, // Short timeout for auth check
+        skipMetrics: true
       });
 
       // If the command succeeds and returns a token, user is authenticated
@@ -366,8 +368,12 @@ export class AuggieIntegration {
     const {
       cwd = process.cwd(),
       timeout = this.timeout,
-      env = process.env
+      env = process.env,
+      skipMetrics = false,
     } = options;
+
+    // Count Auggie invocations for live metrics (skip for auth checks or internal calls)
+    try { if (!skipMetrics && command === this.auggieCommand) incAuggieCalls(); } catch {}
 
     let childProcess = null;
 

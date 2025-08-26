@@ -3,6 +3,7 @@ import { gotoCmd, clickCmd, typeCmd } from './commands.js';
 import { cliExecutor } from './cli-executor.js';
 import { debugLogger } from './debug.js';
 
+import { incLLMCalls, incToolCalls } from './metrics.js';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Simple cancellation wiring for the in-flight agent loop/fetch
@@ -165,9 +166,9 @@ const toolRegistry = {
     description: 'Type search query and submit (combines typing + enter)',
     schema: {
       type: 'object',
-      properties: { 
-        selector: { type: 'string' }, 
-        query: { type: 'string' } 
+      properties: {
+        selector: { type: 'string' },
+        query: { type: 'string' }
       },
       required: ['selector', 'query'],
       additionalProperties: false,
@@ -177,7 +178,7 @@ const toolRegistry = {
       const selector = String(args.selector);
       const text = String(args.query);
       debugLogger.logToolExecution('search', { selector, query: text }, startTime);
-      
+
       try {
         // Prefer a visible element when waiting
         await page.waitForSelector(selector, { timeout: 10000, visible: true });
@@ -231,7 +232,7 @@ const toolRegistry = {
 
         // Submit via Enter. If a surrounding form exists, Enter will submit it.
         await page.keyboard.press('Enter');
-        
+
         debugLogger.logToolResult('search', { selector, query: text }, startTime);
       } catch (error) {
         debugLogger.logToolResult('search', null, startTime, error);
@@ -260,7 +261,7 @@ const toolRegistry = {
     description: 'Execute CLI commands on the system',
     schema: {
       type: 'object',
-      properties: { 
+      properties: {
         command: { type: 'string', description: 'The command to execute' },
         args: { type: 'array', items: { type: 'string' }, description: 'Command arguments' },
         background: { type: 'boolean', description: 'Run in background (default: false)' },
@@ -273,9 +274,9 @@ const toolRegistry = {
     handler: async (_page, args) => {
       const startTime = new Date();
       const { command, args: cmdArgs = [], background = false, timeout = 30000, cwd } = args;
-      
+
       debugLogger.logToolExecution('cli', { command, args: cmdArgs, background, timeout, cwd }, startTime);
-      
+
       try {
         const result = await cliExecutor.executeCommand(command, {
           args: cmdArgs,
@@ -283,7 +284,7 @@ const toolRegistry = {
           timeout,
           cwd
         });
-        
+
         const toolResult = {
           success: result.success,
           output: result.stdout || result.message || '',
@@ -291,7 +292,7 @@ const toolRegistry = {
           exitCode: result.exitCode,
           processId: result.processId
         };
-        
+
         debugLogger.logToolResult('cli', toolResult, startTime);
         return toolResult;
       } catch (error) {
@@ -309,7 +310,7 @@ const toolRegistry = {
     description: 'Get help information for CLI commands',
     schema: {
       type: 'object',
-      properties: { 
+      properties: {
         command: { type: 'string', description: 'The command to get help for' }
       },
       required: ['command'],
@@ -318,9 +319,9 @@ const toolRegistry = {
     handler: async (_page, args) => {
       const startTime = new Date();
       const { command } = args;
-      
+
       debugLogger.logToolExecution('cliHelp', { command }, startTime);
-      
+
       try {
         const result = await cliExecutor.getCommandHelp(command);
         debugLogger.logToolResult('cliHelp', result, startTime);
@@ -346,13 +347,13 @@ const toolRegistry = {
     handler: async (_page, _args) => {
       const startTime = new Date();
       debugLogger.logToolExecution('cliList', {}, startTime);
-      
+
       const processes = cliExecutor.listProcesses();
       const result = {
         success: true,
         processes
       };
-      
+
       debugLogger.logToolResult('cliList', result, startTime);
       return result;
     },
@@ -361,7 +362,7 @@ const toolRegistry = {
     description: 'Kill a background process by ID',
     schema: {
       type: 'object',
-      properties: { 
+      properties: {
         processId: { type: 'number', description: 'Process ID to kill' }
       },
       required: ['processId'],
@@ -370,12 +371,12 @@ const toolRegistry = {
     handler: async (_page, args) => {
       const startTime = new Date();
       const { processId } = args;
-      
+
       debugLogger.logToolExecution('cliKill', { processId }, startTime);
-      
+
       const result = cliExecutor.killProcess(processId);
       debugLogger.logToolResult('cliKill', result, startTime);
-      
+
       return result;
     },
   },
@@ -406,12 +407,12 @@ const toolRegistry = {
     handler: async (_page, args) => {
       const p = resolveQloodPath(String(args.path));
       if (!fs.existsSync(p)) throw new Error('File not found');
-      
+
       const stat = fs.statSync(p);
       if (stat.isDirectory()) {
         throw new Error('Cannot read directory as file - use qloodList to list directory contents');
       }
-      
+
       const content = fs.readFileSync(p, 'utf8');
       return { path: path.relative(getQloodDir(), p), content };
     }
@@ -500,31 +501,31 @@ function coercePlanShape(obj) {
 // Check if a query is conversational and can be answered without tools
 function isConversationalQuery(goal) {
   const lowerGoal = goal.toLowerCase().trim();
-  
+
   // Simple identity questions
   if (lowerGoal.match(/^(who are you|what are you|what is this|hello|hi|help)(\?)?$/)) {
     return true;
   }
-  
+
   // Questions about capabilities without asking to do something
   if (lowerGoal.match(/^(what can you do|what do you do|how do you work)(\?)?$/)) {
     return true;
   }
-  
+
   // Basic greetings without requests
   if (lowerGoal.match(/^(good morning|good afternoon|good evening|hey there)(\?)?$/)) {
     return true;
   }
-  
+
   return false;
 }
 
 // Handle conversational queries without tools
 function handleConversationalQuery(goal, onLog) {
   const lowerGoal = goal.toLowerCase().trim();
-  
+
   let response = '';
-  
+
   if (lowerGoal.match(/^(who are you|what are you)(\?)?$/)) {
     response = 'I am Qlood, an AI assistant that can help you automate web browsers and execute CLI commands to accomplish your goals.';
   } else if (lowerGoal.match(/^(what can you do|what do you do)(\?)?$/)) {
@@ -536,7 +537,7 @@ function handleConversationalQuery(goal, onLog) {
   } else if (lowerGoal.match(/^how do you work(\?)?$/)) {
     response = 'I work by understanding your goals and using tools to accomplish them - I can control web browsers, execute CLI commands, take screenshots, and manage files. Just describe what you want to do and I\'ll break it down into steps.';
   }
-  
+
   if (onLog) {
     onLog(response);
   } else {
@@ -590,7 +591,7 @@ export async function runAgent(goal, { headless = false, debug = false, promptFo
   const maxSteps = 20;
   const recentActions = [];
   const actionWindow = 5; // Track last 5 actions to detect loops
-  
+
   for (let step = 0; step < maxSteps; step++) {
     let context = 'No page open yet';
     if (page) {
@@ -610,15 +611,15 @@ export async function runAgent(goal, { headless = false, debug = false, promptFo
         debugLogger.logError('Page context check', error);
       }
     }
-    
-    const historyText = actionHistory.length > 0 
+
+    const historyText = actionHistory.length > 0
       ? `\nRecent actions:\n${actionHistory.slice(-3).map((h, i) => `${actionHistory.length - 3 + i + 1}. ${h}`).join('\n')}`
       : '';
-    
+
     const guidelines = composeGuidelines();
     const systemInstructions = getSystemInstructions();
     const additionalInstructions = systemInstructions ? `\n\nAdditional Instructions:\n${systemInstructions}` : '';
-    
+
     const prompt = `${guidelines}
 
 Goal: ${sanitizedGoal}
@@ -666,6 +667,8 @@ ${additionalInstructions}`;
     // Support cancellation
     const controller = new AbortController();
     currentAbortController = controller;
+    // Count this LLM API call for live metrics
+    try { incLLMCalls(); } catch {}
     const resp = await fetch(OPENROUTER_URL, {
       method: 'POST',
       headers: {
@@ -684,38 +687,38 @@ ${additionalInstructions}`;
       debugLogger.logError('OpenRouter API', error);
       throw error;
     }
-    
+
     const data = await resp.json();
     const rawContent = data.choices?.[0]?.message?.content || '';
     const content = rawContent
       .replace(/[\u{10000}-\u{10FFFF}]/gu, '')
       .replace(/[^\x00-\xFF]/g, '?');
-    
+
     if (debug && onLog) {
       onLog(`Raw response length: ${rawContent.length}, filtered length: ${content.length}`);
     }
 
     let plan = parseMaybeJson(content);
-    
+
     debugLogger.logAgentResponse(content, plan);
-    
-    if (!plan) { 
+
+    if (!plan) {
       const msg = 'Model did not return JSON; stopping.';
       debugLogger.logError('Agent parsing', new Error(msg));
-      if (onLog) onLog(msg); else console.log(msg); 
-      break; 
+      if (onLog) onLog(msg); else console.log(msg);
+      break;
     }
-    
+
     const coerced = coercePlanShape(plan);
-    if (!coerced) { 
+    if (!coerced) {
       const msg = 'Could not interpret tool call; stopping.';
       debugLogger.logError('Agent parsing', new Error(msg));
-      if (onLog) onLog(msg); else console.log(msg); 
-      break; 
+      if (onLog) onLog(msg); else console.log(msg);
+      break;
     }
-    
+
     const { tool, args } = coerced;
-    
+
     // Simple loop detection - check if we're repeating the same action
     const actionKey = `${tool}:${JSON.stringify(args)}`;
     if (recentActions.includes(actionKey) && step > actionWindow) {
@@ -724,19 +727,19 @@ ${additionalInstructions}`;
       if (onLog) onLog(msg); else console.log(msg);
       break;
     }
-    
+
     // Update recent actions tracking (keep only last actionWindow actions)
     recentActions.push(actionKey);
     if (recentActions.length > actionWindow) {
       recentActions.shift();
     }
-    
+
   async function ensureAgentPage() {
     try { await getBrowser(); } catch { await createChrome({ headless, debug }); }
-    
+
     // Always refresh the page reference to handle detached frames
     page = await ensurePage();
-    
+
     // Verify page is accessible
     try {
       await page.evaluate(() => document.readyState);
@@ -767,21 +770,22 @@ ${additionalInstructions}`;
                        `🔧 Working on ${tool}`;
     onLog(actionDesc);
   }
-  if (tool === 'done') { 
-    if (onLog) onLog(`Done: ${args?.result ?? ''}`); 
-    else console.log('Done:', args?.result ?? ''); 
-    break; 
+  if (tool === 'done') {
+    if (onLog) onLog(`Done: ${args?.result ?? ''}`);
+    else console.log('Done:', args?.result ?? '');
+    break;
   }
   const entry = toolRegistry[tool];
-  if (!entry) { 
-    if (onLog) onLog(`Unknown tool '${tool}', stopping.`); 
-    else console.log(`Unknown tool '${tool}', stopping.`); 
-    break; 
+  if (!entry) {
+    if (onLog) onLog(`Unknown tool '${tool}', stopping.`);
+    else console.log(`Unknown tool '${tool}', stopping.`);
+    break;
   }
+  try { incToolCalls(tool); } catch {}
   await ensureAgentPage();
   // Small randomized delay before actions to avoid bursty behavior
   await sleep(300 + Math.floor(Math.random() * 500));
-  
+
   // Execute the tool and capture the result
   let toolResult;
   let errorOccurred = false;
@@ -793,7 +797,7 @@ ${additionalInstructions}`;
     if (onLog) onLog(`Agent error: ${error.message}`);
     if (debug && onLog) onLog(`Full error details: ${JSON.stringify({ name: error.name, message: error.message, stack: error.stack })}`);
   }
-  
+
   // Record the action and result in history
   let actionDesc;
   if (errorOccurred) {
