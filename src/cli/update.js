@@ -46,9 +46,14 @@ export async function checkAndAutoUpdate(currentVersion) {
             resolve();
           });
           // Exit current process once the new one spawns
-          restart.on('spawn', () => {
-            // Give the child a brief moment to attach stdio
-            setTimeout(() => process.exit(0), 10);
+          // Wait for the restarted process to finish so it keeps control of the TTY
+          restart.on('exit', (code, signal) => {
+            if (signal) {
+              // Propagate termination signal
+              try { process.kill(process.pid, signal); } catch {}
+              process.exit(0);
+            }
+            process.exit(code ?? 0);
           });
         } else {
           try { spinner.stop('Auto-update failed', false); } catch {}

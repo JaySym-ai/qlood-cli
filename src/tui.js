@@ -704,7 +704,7 @@ export async function runTui() {
         const status = newMode ? '{green-fg}Active{/}' : '{yellow-fg}Deactivated{/}';
         addLog(`Headless mode: ${status}`);
         showToast(`Headless ${newMode ? 'enabled' : 'disabled'}`, newMode ? 'success' : 'warn');
-        addLog('{dim-fg}Browser will restart with new settings on next command.{/}');
+        addLog('Browser will restart with new settings on next command.');
         // Close current browser so next command will use new headless setting
         await cancelCurrentAction();
       } else if (cmd.startsWith('/open ')) {
@@ -966,7 +966,7 @@ export async function runTui() {
             const content = fs.readFileSync(readPath, 'utf-8');
             const stat = fs.statSync(readPath);
             addLog(`{bold}--- Project Context (${rel}) ---{/}`);
-            addLog(`{dim-fg}Last updated: ${new Date(stat.mtime).toISOString()}{/}`);
+            addLog(`Last updated: ${new Date(stat.mtime).toISOString()}`);
             addLog(content);
           }
         } catch (e) {
