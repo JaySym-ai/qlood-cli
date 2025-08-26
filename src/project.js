@@ -502,8 +502,7 @@ export async function generateProjectContext(cwd = process.cwd(), options = {}) 
     // Try the comprehensive prompt first
     let result = await executeCustomPrompt(initializePrompt, {
       cwd,
-      usePrintFormat: true,
-      timeout: 120000 // 2 minutes timeout for project analysis
+      usePrintFormat: true
     });
 
 

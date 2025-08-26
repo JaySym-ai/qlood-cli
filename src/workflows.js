@@ -100,7 +100,7 @@ export async function addWorkflow(description, { cwd = process.cwd() } = {}) {
   // Compose a workflow-specific prompt oriented for Playwright with project context
   const prompt = buildWorkflowPrompt(description, cwd);
 
-  const res = await executeCustomPrompt(prompt, { usePrintFormat: true, timeout: 180000 });
+  const res = await executeCustomPrompt(prompt, { usePrintFormat: true });
   const content = (res.success ? res.stdout : '').trim();
   const final = content && content.length > 50 ? content : `# ${description}\n\n1. Open the app homepage.\n2. Describe the steps to accomplish: ${description}.\n3. Assert expected UI and network results.\n`;
   fs.writeFileSync(outPath, final);
@@ -139,7 +139,7 @@ Current Project Information:${contextSection}${structureSection}${configSection}
 --- Existing Workflow to Update ---
 ${prev}`;
   
-  const res = await executeCustomPrompt(prompt, { usePrintFormat: true, timeout: 180000 });
+  const res = await executeCustomPrompt(prompt, { usePrintFormat: true });
   const next = (res.success ? res.stdout : '').trim();
   if (next && next.length > 20) {
     fs.writeFileSync(p, next);

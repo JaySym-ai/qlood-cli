@@ -9,7 +9,8 @@ import { debugLogger } from './debug.js';
 export class AuggieIntegration {
   constructor(options = {}) {
     this.auggieCommand = options.auggieCommand || 'auggie';
-    this.timeout = options.timeout || 30000;
+    // By default, do not enforce a timeout for Auggie commands. Use null to mean "no timeout".
+    this.timeout = options.timeout ?? null;
     this.maxBuffer = options.maxBuffer || 1024 * 1024 * 10; // 10MB
   }
 
@@ -181,7 +182,6 @@ export class AuggieIntegration {
 
       const result = await this._executeAuggieCommand(prompt, {
         usePrintFormat: true,
-        timeout: 120000, // 2 minutes timeout for project analysis
         ...options
       });
 
@@ -229,7 +229,6 @@ export class AuggieIntegration {
     try {
       // Try to run a simple command that requires authentication
       const result = await this._executeCommand('auggie', ['--print-augment-token'], {
-        timeout: 5000, // Short timeout for auth check
         skipMetrics: true
       });
 
@@ -281,7 +280,7 @@ export class AuggieIntegration {
       }
 
       const result = await this._executeCommand(this.auggieCommand, args, {
-        timeout: options.timeout || this.timeout,
+        timeout: (options.timeout ?? this.timeout),
         cwd: options.cwd || process.cwd()
       });
 
@@ -351,7 +350,7 @@ export class AuggieIntegration {
     }
 
     return await this._executeCommand(this.auggieCommand, args, {
-      timeout: options.timeout || this.timeout,
+      timeout: (options.timeout ?? this.timeout),
       cwd: options.cwd || process.cwd()
     });
   }
@@ -397,22 +396,9 @@ export class AuggieIntegration {
         });
       });
 
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => {
-          if (childProcess) {
-            childProcess.kill('SIGTERM');
-            // Give it a moment to clean up, then force kill
-            setTimeout(() => {
-              if (childProcess && !childProcess.killed) {
-                childProcess.kill('SIGKILL');
-              }
-            }, 1000);
-          }
-          reject(new Error('Command timeout'));
-        }, timeout)
-      );
 
-      const { stdout, stderr } = await Promise.race([execPromise, timeoutPromise]);
+
+      const { stdout, stderr } = await execPromise;
 
       const result = {
         success: true,
