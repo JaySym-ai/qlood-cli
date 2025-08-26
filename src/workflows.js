@@ -5,6 +5,44 @@ import { executeCustomPrompt, checkAuthentication } from './auggie-integration.j
 import { runProjectTest } from './test.js';
 import { buildWorkflowPrompt } from './prompts/prompt.workflow.js';
 
+// Import the getProjectContext function from the prompt file
+function getProjectContext(cwd = process.cwd()) {
+  const base = ensureProjectDirs(cwd);
+  const contextPath = path.join(base, 'notes', 'context.md');
+  const structurePath = path.join(base, 'project-structure.json');
+  const configPath = path.join(base, 'qlood.json');
+  
+  let context = '';
+  let structure = '';
+  let config = '';
+  
+  try {
+    if (fs.existsSync(contextPath)) {
+      context = fs.readFileSync(contextPath, 'utf-8');
+    }
+  } catch (e) {
+    // ignore
+  }
+  
+  try {
+    if (fs.existsSync(structurePath)) {
+      structure = fs.readFileSync(structurePath, 'utf-8');
+    }
+  } catch (e) {
+    // ignore
+  }
+  
+  try {
+    if (fs.existsSync(configPath)) {
+      config = fs.readFileSync(configPath, 'utf-8');
+    }
+  } catch (e) {
+    // ignore
+  }
+  
+  return { context, structure, config };
+}
+
 function slugify(text) {
   return String(text)
     .toLowerCase()
@@ -59,10 +97,10 @@ export async function addWorkflow(description, { cwd = process.cwd() } = {}) {
   const outDir = getWorkflowsDir(cwd);
   const outPath = path.join(outDir, file);
 
-  // Compose a workflow-specific prompt oriented for Playwright
-  const prompt = buildWorkflowPrompt(description);
+  // Compose a workflow-specific prompt oriented for Playwright with project context
+  const prompt = buildWorkflowPrompt(description, cwd);
 
-  const res = await executeCustomPrompt(prompt, { usePrintFormat: true, timeout: 120000 });
+  const res = await executeCustomPrompt(prompt, { usePrintFormat: true, timeout: 180000 });
   const content = (res.success ? res.stdout : '').trim();
   const final = content && content.length > 50 ? content : `# ${description}\n\n1. Open the app homepage.\n2. Describe the steps to accomplish: ${description}.\n3. Assert expected UI and network results.\n`;
   fs.writeFileSync(outPath, final);
@@ -80,8 +118,28 @@ export async function updateWorkflow(id, { cwd = process.cwd() } = {}) {
   }
 
   const prev = fs.readFileSync(p, 'utf-8');
-  const prompt = `Update the following end-to-end testing workflow to reflect recent code changes in the project. Keep steps concise and actionable. Maintain Markdown format.\n\n--- Existing Workflow ---\n\n${prev}`;
-  const res = await executeCustomPrompt(prompt, { usePrintFormat: true, timeout: 120000 });
+  const { context, structure, config } = getProjectContext(cwd);
+  
+  const contextSection = context ? `\n=== Current Project Context ===\n${context}` : '';
+  const structureSection = structure ? `\n=== Project Structure ===\n${structure}` : '';
+  const configSection = config ? `\n=== Configuration ===\n${config}` : '';
+  
+  const prompt = `Update the following end-to-end testing workflow to reflect recent code changes in the project.
+
+INSTRUCTIONS:
+- Analyze the current codebase and project structure
+- Update selectors, routes, and UI elements based on actual code
+- Ensure steps are specific and actionable for Playwright
+- Keep the same scenario but make it more detailed and accurate
+- Include specific data-testid, button text, form fields, and navigation paths
+- Maintain comprehensive Markdown format
+
+Current Project Information:${contextSection}${structureSection}${configSection}
+
+--- Existing Workflow to Update ---
+${prev}`;
+  
+  const res = await executeCustomPrompt(prompt, { usePrintFormat: true, timeout: 180000 });
   const next = (res.success ? res.stdout : '').trim();
   if (next && next.length > 20) {
     fs.writeFileSync(p, next);
