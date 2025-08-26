@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { exec, spawn } from 'child_process';
+
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -9,27 +9,6 @@ const __dirname = path.dirname(__filename);
 const packageJson = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
 const currentVersion = packageJson.version;
 
-// Lightweight update notice (no auto-install by default). Disable via QLOOD_NO_UPDATE=1
-if (process.env.QLOOD_NO_UPDATE !== '1') {
-  exec('npm view qlood-cli version', (err, stdout) => {
-    if (err) return;
-    const latestVersion = stdout.trim();
-    if (latestVersion && currentVersion !== latestVersion) {
-      console.log(`\nNew version available: ${latestVersion}. You are using ${currentVersion}.`);
-      console.log('To update:');
-      console.log('  - Local project:  npm i qlood-cli');
-      console.log('  - Global install: npm i -g qlood-cli');
-      // If explicit opt-in is set, perform background install
-      if (process.env.QLOOD_AUTOUPDATE === '1') {
-        console.log('Auto-updating in the background (QLOOD_AUTOUPDATE=1)...');
-        try {
-          const updater = spawn('npm', ['i', 'qlood-cli'], { detached: true, stdio: 'ignore' });
-          updater.unref();
-        } catch {}
-      }
-    }
-  });
-}
 
 import { Command } from 'commander';
 import dotenv from 'dotenv';
@@ -43,27 +22,14 @@ import { debugLogger } from '../src/debug.js';
 import { ensureAuggieUpToDate } from '../src/auggie-integration.js';
 import { generateProjectContext, getProjectDir } from '../src/project.js';
 import fs from 'fs/promises';
+import { registerReviewCommand } from '../src/commands/review.js';
+
+import { startCliSpinner } from '../src/cli/spinner.js';
+import { checkAndAutoUpdate as checkAndAutoUpdateUtil } from '../src/cli/update.js';
 
 
 dotenv.config();
 
-// Simple CLI spinner for long-running tasks
-function startCliSpinner(message) {
-  const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
-  let i = 0;
-  const base = `${message}`;
-  process.stdout.write(base + ' ');
-  const timer = setInterval(() => {
-    const f = frames[i = (i + 1) % frames.length];
-    process.stdout.write(`\r${base} ${f}`);
-  }, 100);
-  const stop = (finalMessage, ok = true) => {
-    clearInterval(timer);
-    const msg = finalMessage || base;
-    process.stdout.write(`\r${msg} ${ok ? '✓' : '✗'}\n`);
-  };
-  return { stop };
-}
 
 const program = new Command();
 
@@ -85,6 +51,11 @@ process.on('SIGINT', async () => {
 });
 
 // Load defaults from config if present
+
+
+
+await checkAndAutoUpdateUtil(currentVersion);
+
 const cfgDefaults = loadConfig();
 
 program
@@ -187,6 +158,9 @@ program
     await runTui();
   });
 
+// Register externalized commands
+registerReviewCommand(program, { startCliSpinner });
+
 // Project commands
 program
   .command('test')
@@ -252,6 +226,10 @@ program
     await deleteQloodDir();
   });
 
+
+
+
+// review command is now registered from src/commands/review.js
 
 
 // Auggie integration commands

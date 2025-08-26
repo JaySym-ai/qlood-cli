@@ -6,11 +6,12 @@ import { openCmd, gotoCmd, clickCmd, typeCmd } from './commands.js';
 import { withPage, createChrome, cancelCurrentAction } from './chrome.js';
 import { runAgent, cancelAgentRun } from './agent.js';
 import { debugLogger } from './debug.js';
-import { ensureProjectInit, loadProjectConfig, getProjectStructurePath, saveProjectStructure, scanProject, generateProjectContext, getProjectDir } from './project.js';
-import { checkAuthentication } from './auggie-integration.js';
+import { ensureProjectInit, loadProjectConfig, getProjectStructurePath, saveProjectStructure, scanProject, generateProjectContext, getProjectDir, ensureProjectDirs, extractCleanMarkdown } from './project.js';
+import { checkAuthentication, executeCustomPrompt } from './auggie-integration.js';
 
 import { addWorkflow, runWorkflow, runAllWorkflows, updateWorkflow, deleteWorkflow, listWorkflows } from './workflows.js';
 
+import { buildRefactorPrompt } from './prompts/prompt.refactor.js';
 import { getMetrics, onMetricsUpdate } from './metrics.js';
 export async function runTui() {
   // Auto-enable debug logging for this session
@@ -885,6 +886,7 @@ export async function runTui() {
         addLog('  {cyan-fg}/wdupdate <id>{/} - Update workflow to match code changes');
         addLog('  {cyan-fg}/wfdel <id>{/} - Delete a workflow');
         addLog('  {cyan-fg}/context [--update]{/} - View or update project context');
+        addLog('  {cyan-fg}/refactor{/} - Analyze repo and save a refactor plan under ./.qlood/results');
         addLog('  {cyan-fg}/clean{/} - Delete all files under ./.qlood/debug and ./.qlood/results');
         addLog('  {cyan-fg}/quit{/} - Exit qlood');
         addLog('');
@@ -969,6 +971,37 @@ export async function runTui() {
           }
         } catch (e) {
           addLog(`{red-fg}Error reading context:{/} ${e?.message || e}`);
+        }
+      } else if (cmd === '/refactor') {
+        const authResult = await checkAuthentication();
+        if (!authResult.success || !authResult.authenticated) {
+          addLog('{red-fg}❌ Authentication required to run refactor analysis.{/}');
+          addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
+          showToast('Login required', 'error');
+          return;
+        }
+        startLoadingAnimation('Scanning repository for refactoring opportunities...');
+        const cwd = process.cwd();
+        try {
+          ensureProjectDirs(cwd);
+          const prompt = buildRefactorPrompt();
+          const result = await executeCustomPrompt(prompt, { cwd, usePrintFormat: true });
+          let content = result.success ? extractCleanMarkdown(result.stdout) : '';
+          if (!content || content.trim().length < 50) {
+            content = result.stdout || content || '# Refactor Plan\n\nNo results.';
+          }
+          const ts = new Date().toISOString().replace(/[:.]/g, '-');
+          const baseDir = path.join(getProjectDir(cwd), 'results', `refactor-${ts}`);
+          fs.mkdirSync(baseDir, { recursive: true });
+          const outPath = path.join(baseDir, 'refactor.md');
+          fs.writeFileSync(outPath, content, 'utf-8');
+          stopLoadingAnimation('Refactor plan generated', true);
+          addLog(`Saved refactor plan: ${path.relative(cwd, outPath)}`);
+          showToast('Refactor plan saved', 'success');
+        } catch (e) {
+          stopLoadingAnimation(`Refactor analysis failed: ${e?.message || e}`, false);
+          addLog(`{red-fg}refactor error:{/} ${e?.message || e}`);
+          showToast('Refactor failed', 'error');
         }
       } else if (cmd === '/quit') {
         teardownAndExit(0);
