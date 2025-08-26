@@ -669,6 +669,10 @@ ${additionalInstructions}`;
     currentAbortController = controller;
     // Count this LLM API call for live metrics
     try { incLLMCalls(); } catch {}
+    
+    // Log the detailed LLM request
+    debugLogger.logLLMCall(effectiveModel, body.messages, null);
+    
     const resp = await fetch(OPENROUTER_URL, {
       method: 'POST',
       headers: {
@@ -685,6 +689,7 @@ ${additionalInstructions}`;
     if (!resp.ok) {
       const error = new Error(`OpenRouter error: ${resp.status}`);
       debugLogger.logError('OpenRouter API', error);
+      debugLogger.logLLMCall(effectiveModel, body.messages, null, error);
       throw error;
     }
 
@@ -693,6 +698,9 @@ ${additionalInstructions}`;
     const content = rawContent
       .replace(/[\u{10000}-\u{10FFFF}]/gu, '')
       .replace(/[^\x00-\xFF]/g, '?');
+    
+    // Log the detailed LLM response
+    debugLogger.logLLMCall(effectiveModel, body.messages, content);
 
     if (debug && onLog) {
       onLog(`Raw response length: ${rawContent.length}, filtered length: ${content.length}`);

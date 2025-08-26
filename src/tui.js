@@ -191,7 +191,7 @@ export async function runTui() {
       }
     } catch {}
     const tip = hasWorkflows
-      ? ` {${theme.dim}-fg}Use {/}{bold}/wf <id>{/}{${theme.dim}-fg} or {/}{bold}/help{/}{${theme.dim}-fg}. Commands must start with {/}{bold}/{/}{${theme.dim}-fg}.{/}`
+      ? ` {${theme.dim}-fg}Use {/}{bold}/wf <id>{/}{${theme.dim}-fg}, {/}{bold}/wfls{/}{${theme.dim}-fg} or {/}{bold}/help{/}{${theme.dim}-fg}. Commands must start with {/}{bold}/{/}{${theme.dim}-fg}.{/}`
       : ` {${theme.dim}-fg}Create your first workflow using {/}{bold}/wfadd <description>{/}{${theme.dim}-fg}. Commands must start with {/}{bold}/{/}{${theme.dim}-fg}.{/}`;
     header.setContent(
       `${brand} {${theme.dim}-fg}AI Test Runner{/}\n` +
@@ -320,8 +320,10 @@ export async function runTui() {
     showToast('API key configured', 'success');
   }
 
-  // Check Auggie authentication
+  // Check Auggie authentication  
+  startLoadingAnimation('Checking Auggie authentication...');
   const isAuggieAuthenticated = await checkAuggieAuth();
+  stopLoadingAnimation('Authentication check complete', true);
   if (!isAuggieAuthenticated) {
     addLog('{red-fg}❌ Authentication required for AI features.{/}');
     addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
@@ -333,7 +335,7 @@ export async function runTui() {
     // Tip depends on existing workflows
     try {
       const wfDir = path.join(getProjectDir(process.cwd()), 'workflows');
-      const hasWfs = fs.existsSync(wfDir) && fs.readdirSync(wfDir).some(f => /^(\d+)-.+\.md$/.test(f));
+      const hasWfs = fs.existsSync(wfDir) && fs.readdirSync(wfDir).some(f => /^(\d+)[-_].+\.md$/.test(f));
       if (hasWfs) {
         addLog('Tip: /wf <id> runs a workflow. Use {bold}/wfls{/} to list workflows.');
       } else {
@@ -352,7 +354,7 @@ export async function runTui() {
     if (!projectCfg) {
       expectingInitConfirm = true;
       addLog('{yellow-fg}This project is not initialized for qlood.{/}');
-      addLog('We can create ./.qlood, scan your project to set sensible defaults (URL, start command), and add a basic workflow.');
+      addLog('We can create ./.qlood and scan your project to set sensible defaults (URL, start command).');
       addLog('This will also allow the {cyan-fg}www.augmentcode.com{/} Auggie CLI tool to index your codebase for faster retrieval.');
       addLog('Initialize now? {bold}y{/}/n');
     } else {
@@ -457,7 +459,14 @@ export async function runTui() {
         addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
       }
 
-      addLog('You can now run a workflow with {bold}/wf <id>{/}.');
+      const items = listWorkflows();
+      if (items.length) {
+        addLog('You can now run a workflow with {bold}/wf <id>{/}.');
+      } else {
+        addLog('{yellow-fg}No workflows found yet.{/}');
+        addLog('Create one with: {bold}/wfadd <short description>{/}');
+        addLog('Example: {cyan-fg}/wfadd User signup and login{/}');
+      }
       showToast('Project initialized', 'success');
       expectingInitConfirm = false;
     }
@@ -602,7 +611,14 @@ export async function runTui() {
             addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
           }
 
-          addLog('You can now run a workflow with {bold}/wf <id>{/}.');
+          const items = listWorkflows();
+          if (items.length) {
+            addLog('You can now run a workflow with {bold}/wf <id>{/}.');
+          } else {
+            addLog('{yellow-fg}No workflows found yet.{/}');
+            addLog('Create one with: {bold}/wfadd <short description>{/}');
+            addLog('Example: {cyan-fg}/wfadd User signup and login{/}');
+          }
           showToast('Project initialized', 'success');
           expectingInitConfirm = false;
           return;
@@ -731,7 +747,7 @@ export async function runTui() {
           showToast('Login required', 'error');
           return;
         }
-        startLoadingAnimation('Creating workflow with Auggie...');
+        startLoadingAnimation('Creating workflow with Auggie... This may take several minutes.');
         try {
           const { id, file } = await addWorkflow(desc);
           stopLoadingAnimation('Workflow created', true);
@@ -772,6 +788,33 @@ export async function runTui() {
         const items = listWorkflows();
         if (!items.length) { addLog('No workflows found. Use /wfadd to create one.'); }
         for (const it of items) addLog(`- ${it.id}: ${it.name} (${it.file})`);
+      } else if (cmd === '/wf') {
+        const items = listWorkflows();
+        if (!items.length) {
+          addLog('{yellow-fg}No workflows found in ./.qlood/workflows.{/}');
+          addLog('Create one with: {bold}/wfadd <short description>{/}');
+          addLog('Example: {cyan-fg}/wfadd User signup and login{/}');
+          addLog('Then run it with: {cyan-fg}/wf 1{/}');
+          return;
+        }
+        if (items.length === 1) {
+          const only = items[0];
+          addLog(`Only one workflow found. Auto-running {bold}/wf ${only.id}{/}.`);
+          showWorking();
+          try {
+            await runWorkflow(only.id, { headless: getHeadlessMode(), debug: false, onLog: (m) => addLog(m) });
+            addLog('{green-fg}Workflow test completed{/}');
+          } catch (e) {
+            addLog(`{red-fg}wf error:{/} ${e?.message || e}`);
+          } finally {
+            hideWorking();
+          }
+        } else {
+          addLog('Multiple workflows found.');
+          addLog('Usage: /wf <id>');
+          addLog('Tip: list available workflows with {bold}/wfls{/}');
+        }
+
       } else if (cmd.startsWith('/wf ')) {
         const idText = cmd.replace('/wf ', '').trim();
         const id = Number(idText);

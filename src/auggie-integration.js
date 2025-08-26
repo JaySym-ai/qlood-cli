@@ -1,6 +1,7 @@
 import { spawn, exec } from 'child_process';
 
 import { incAuggieCalls } from './metrics.js';
+import { debugLogger } from './debug.js';
 /**
  * Auggie CLI Integration Module
  * Provides functions for file operations using the Auggie CLI tool
@@ -370,6 +371,12 @@ export class AuggieIntegration {
     // Count Auggie invocations for live metrics (skip for auth checks or internal calls)
     try { if (!skipMetrics && command === this.auggieCommand) incAuggieCalls(); } catch {}
 
+    // Log Auggie request (only for Auggie commands, not other shell commands)
+    const startTime = new Date();
+    if (command === this.auggieCommand) {
+      debugLogger.logAuggieRequest(command, args, options);
+    }
+
     let childProcess = null;
 
     try {
@@ -407,11 +414,19 @@ export class AuggieIntegration {
 
       const { stdout, stderr } = await Promise.race([execPromise, timeoutPromise]);
 
-      return {
+      const result = {
         success: true,
         stdout: stdout.trim(),
         stderr: stderr.trim()
       };
+
+      // Log Auggie response (only for Auggie commands)
+      if (command === this.auggieCommand) {
+        const duration = new Date() - startTime;
+        debugLogger.logAuggieResponse(command, result, duration);
+      }
+
+      return result;
     } catch (error) {
       // Ensure child process is cleaned up
       if (childProcess && !childProcess.killed) {
@@ -422,11 +437,19 @@ export class AuggieIntegration {
         }
       }
 
-      return {
+      const result = {
         success: false,
         stdout: error.stdout || '',
         stderr: error.stderr || error.message
       };
+
+      // Log Auggie response error (only for Auggie commands)
+      if (command === this.auggieCommand) {
+        const duration = new Date() - startTime;
+        debugLogger.logAuggieResponse(command, result, duration, error);
+      }
+
+      return result;
     }
   }
 

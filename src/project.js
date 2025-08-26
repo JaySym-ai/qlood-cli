@@ -12,7 +12,6 @@ export function ensureProjectDirs(cwd = process.cwd()) {
   const dirs = [
     base,
     path.join(base, 'notes'),
-    path.join(base, 'screenshots'),
     path.join(base, 'results'),
     // Canonical directory for workflows
     path.join(base, 'workflows'),
@@ -66,20 +65,46 @@ export function detectProjectConfig(cwd = process.cwd()) {
   const scripts = pkg?.scripts || {};
   const deps = { ...(pkg?.dependencies || {}), ...(pkg?.devDependencies || {}) };
 
-  // Guess start command
+  // Determine if this looks like a web app with a dev server
+  const devScript = String(scripts.dev || '');
+  const startScript = String(scripts.start || '');
+  const scriptHints = `${devScript} ${startScript}`.toLowerCase();
+  const hasWebDeps = !!(deps.vite || deps.next || deps.nuxt || deps['nuxt3'] || deps.astro || deps['react-scripts'] || deps['@angular/core'] || deps['@angular/cli'] || deps['@redwoodjs/core']);
+  const webScriptHint = /(vite|next|nuxt|astro|react-scripts|webpack|vite-node|parcel|gatsby|remix|svelte|angular|ember|redwood)/i.test(scriptHints);
+  const looksWeb = hasWebDeps || webScriptHint;
+
+  // Guess start command only for web-looking projects
   let startCmd = '';
-  if (scripts.dev) startCmd = 'npm run dev';
-  else if (scripts.start) startCmd = 'npm start';
+  if (looksWeb) {
+    if (scripts.dev) startCmd = 'npm run dev';
+    else if (scripts.start) startCmd = 'npm start';
+  }
 
   // Guess port by framework (best-effort)
   let port = 3000;
-  if (deps.vite || /vite/.test(scripts.dev || '')) port = 5173;
+  if (deps.vite || /vite/.test(devScript)) port = 5173;
   else if (deps['@angular/core'] || deps['@angular/cli']) port = 4200;
   else if (deps.astro) port = 4321;
   else if (deps['@redwoodjs/core']) port = 8910;
   else if (deps['react-scripts']) port = 3000;
   else if (deps.next) port = 3000;
   else if (deps.nuxt || deps['nuxt3']) port = 3000;
+
+  if (!looksWeb) {
+    // For non-web/CLI projects, do not assume a dev server
+    return {
+      devServer: {
+        url: '',
+        start: '',
+        healthcheckPath: '/',
+        readyPath: '/',
+        waitTimeoutMs: 60000,
+        waitIntervalMs: 1000
+      },
+      browser: { headless: false },
+      metadata: { createdAt: new Date().toISOString(), version: 1 }
+    };
+  }
 
   const urlStr = `http://localhost:${port}`;
 
@@ -97,24 +122,6 @@ export function detectProjectConfig(cwd = process.cwd()) {
   };
 }
 
-export function createBasicWorkflow(cwd = process.cwd()) {
-  ensureProjectDirs(cwd);
-  const p = path.join(getProjectDir(cwd), 'workflows', 'basic-smoke.md');
-  if (!fs.existsSync(p)) {
-    const content = [
-      '# qlood basic smoke test',
-      '',
-      'Try these scenarios with `qlood test` or paste into the TUI:',
-      '',
-      '- Open the homepage and ensure the header is visible.',
-      '- Navigate to the login page, try invalid credentials, and capture validation.',
-      '- Create a new account, log out, and log back in.',
-      '- Create a sample item/post and verify it appears in the list.',
-      ''
-    ].join('\n');
-    try { fs.writeFileSync(p, content); } catch {}
-  }
-}
 
 export function scanProject(dir, level = 0) {
   if (level > 20) return []; // Avoid infinite loops and very deep trees
@@ -212,6 +219,11 @@ function extractCleanMarkdown(rawResponse) {
       trimmedLine.startsWith('[90m') ||
       trimmedLine.includes('Tool call:') ||
       trimmedLine.includes('Tool result:') ||
+      trimmedLine.startsWith('🤖') ||
+      trimmedLine.startsWith('❌ Error:') ||
+      trimmedLine.startsWith('I\'ll quickly scan') ||
+      trimmedLine.startsWith('I\'ll list') ||
+      trimmedLine.startsWith('Running these') ||
       (skipNextEmoji && trimmedLine.startsWith('🤖'))
     ) {
       skipNextEmoji = false;
@@ -255,8 +267,18 @@ export async function generateProjectContext(cwd = process.cwd(), options = {}) 
 
 
 
-    // If both Auggie attempts fail, use manual fallback
-    if (!result.success) {
+    // Extract clean markdown from the response
+    const cleanMarkdown = result.success ? extractCleanMarkdown(result.stdout) : '';
+    
+    // Check if we got meaningful content (not just processing steps)
+    const hasUsefulContent = cleanMarkdown && 
+      cleanMarkdown.length > 100 && 
+      !cleanMarkdown.includes('I\'ll quickly scan') &&
+      !cleanMarkdown.includes('Running these') &&
+      (cleanMarkdown.includes('# ') || cleanMarkdown.includes('## '));
+
+    // If Auggie failed or didn't provide useful content, use manual fallback
+    if (!result.success || !hasUsefulContent) {
       if (!options.silent) {
         console.log('Auggie analysis failed, generating basic context manually...');
       }
@@ -275,9 +297,6 @@ export async function generateProjectContext(cwd = process.cwd(), options = {}) 
       }
       return true;
     }
-
-    // Extract clean markdown from the response
-    const cleanMarkdown = extractCleanMarkdown(result.stdout);
 
     // Ensure the notes directory exists
     ensureProjectDirs(cwd);
@@ -391,7 +410,6 @@ export async function ensureProjectInit({ cwd = process.cwd(), force = false, sk
 
     const detected = detectProjectConfig(cwd);
     saveProjectConfig(detected || defaultProjectConfig(), cwd);
-    createBasicWorkflow(cwd);
     const structure = scanProject(cwd);
     saveProjectStructure(structure, cwd);
     wasInitialized = true;

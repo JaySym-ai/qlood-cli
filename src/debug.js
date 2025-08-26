@@ -125,6 +125,7 @@ export class DebugLogger {
       goal,
       model,
       promptLength: prompt.length,
+      promptPreview: this.truncate(prompt, 500),
       toolsAvailable: tools.map(t => t.name)
     });
   }
@@ -132,8 +133,65 @@ export class DebugLogger {
   logAgentResponse(response, parsedPlan) {
     this.writeDebug('AGENT_RESPONSE', {
       rawResponseLength: response.length,
-      parseSuccess: !!parsedPlan
+      responsePreview: this.truncate(response, 500),
+      parseSuccess: !!parsedPlan,
+      planSteps: parsedPlan ? parsedPlan.length : 0
     });
+  }
+
+  logLLMCall(model, messages, response, error = null) {
+    this.writeDebug('LLM_CALL', {
+      model,
+      messageCount: messages ? messages.length : 0,
+      messagesPreview: messages ? messages.map(m => ({
+        role: m.role,
+        contentLength: m.content ? m.content.length : 0,
+        contentPreview: this.truncate(m.content, 200)
+      })) : null,
+      responseLength: response ? response.length : 0,
+      responsePreview: response ? this.truncate(response, 300) : null,
+      success: !error,
+      error: error ? error.message : null,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  logAuggieRequest(command, args, options = {}) {
+    this.writeDebug('AUGGIE_REQUEST', {
+      command,
+      args: args ? args.map(arg => this.truncate(String(arg), 300)) : [],
+      options: {
+        timeout: options.timeout,
+        cwd: options.cwd,
+        usePrintFormat: options.usePrintFormat,
+        flags: options.flags
+      },
+      fullCommand: `${command} ${args ? args.map(arg => this.escapeArg(arg)).join(' ') : ''}`,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  logAuggieResponse(command, result, duration, error = null) {
+    this.writeDebug('AUGGIE_RESPONSE', {
+      command,
+      success: result ? result.success : false,
+      durationMs: duration,
+      stdoutLength: result?.stdout ? result.stdout.length : 0,
+      stderrLength: result?.stderr ? result.stderr.length : 0,
+      stdoutPreview: result?.stdout ? this.truncate(result.stdout, 400) : null,
+      stderrPreview: result?.stderr ? this.truncate(result.stderr, 400) : null,
+      error: error ? error.message : null,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  escapeArg(arg) {
+    // Simple arg escaping for display purposes
+    const str = String(arg);
+    if (str.includes(' ') || str.includes('"') || str.includes("'")) {
+      return `"${str.replace(/"/g, '\\"')}"`;
+    }
+    return str;
   }
 
   logToolExecution(toolName, args, startTime) {

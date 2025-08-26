@@ -41,22 +41,34 @@ export async function runProjectTest(goal, { headless, debug, onLog, artifactsDi
   const log = (m) => { if (onLog) onLog(m); else console.log(m); };
 
   // Try to ensure dev server is reachable
-  const baseUrl = cfg.devServer?.url || 'http://localhost:3000';
+  const baseUrl = (cfg.devServer?.url || '').trim();
   const readyPath = (cfg.devServer?.healthcheckPath || cfg.devServer?.readyPath || '/');
   const waitTimeoutMs = Number(cfg.devServer?.waitTimeoutMs ?? 60000);
   const waitIntervalMs = Number(cfg.devServer?.waitIntervalMs ?? 1000);
+
+  if (!baseUrl) {
+    log('No devServer.url configured; this project may not be a web app. Configure ./.qlood/qlood.json to point to your app URL.');
+    throw new Error('No devServer.url configured in ./.qlood/qlood.json');
+  }
+
   log(`Checking dev server at ${baseUrl}${readyPath} ...`);
   let serverStarted = false;
   try {
     await waitForHttp(new URL(readyPath, baseUrl).toString(), { timeoutMs: 2000, intervalMs: 500 });
   } catch {
     // Not ready; try to start if start command exists
-    const startCmd = cfg.devServer?.start;
+    const startCmd = (cfg.devServer?.start || '').trim();
     if (startCmd) {
       const [cmd, ...args] = startCmd.split(' ');
       log(`Starting dev server: ${startCmd}`);
-      const child = spawn(cmd, args, { cwd, shell: true, stdio: 'inherit' });
+      const child = spawn(cmd, args, { cwd, stdio: ['ignore','pipe','pipe'], detached: true });
       serverStarted = true;
+      // Pipe output to artifact log to avoid hijacking the UI
+      try {
+        child.stdout?.on('data', (d) => { try { fs.appendFileSync(path.join(runDir, 'devserver.log'), d); } catch {} });
+        child.stderr?.on('data', (d) => { try { fs.appendFileSync(path.join(runDir, 'devserver.log'), d); } catch {} });
+      } catch {}
+      try { child.unref?.(); } catch {}
       // Give it time to warm up
       try {
         await waitForHttp(new URL(readyPath, baseUrl).toString(), { timeoutMs: waitTimeoutMs, intervalMs: waitIntervalMs });

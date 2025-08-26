@@ -23,7 +23,7 @@ if (process.env.QLOOD_NO_UPDATE !== '1') {
       if (process.env.QLOOD_AUTOUPDATE === '1') {
         console.log('Auto-updating in the background (QLOOD_AUTOUPDATE=1)...');
         try {
-          const updater = spawn('npm', ['i', 'qlood-cli'], { detached: true, stdio: 'ignore', shell: true });
+          const updater = spawn('npm', ['i', 'qlood-cli'], { detached: true, stdio: 'ignore' });
           updater.unref();
         } catch {}
       }

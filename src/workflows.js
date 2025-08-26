@@ -146,14 +146,12 @@ export async function runWorkflow(id, { headless, debug, onLog } = {}) {
 
   const { dir, success, warning, error } = createResultStructure(id, cwd);
 
-  // Delegate to project test runner; it will create artifacts under ./.qlood/results/<runId>
-  await runProjectTest(scenario, { headless, debug, onLog });
+  // Delegate to project test runner; use our pre-created directory structure
+  await runProjectTest(scenario, { headless, debug, onLog, artifactsDir: dir });
 
-  // Find the latest run artifacts
-  const resultsBase = path.join(getProjectDir(cwd), 'results');
-  const runs = fs.readdirSync(resultsBase).filter(x => /\d{4}-\d{2}-\d{2}T/.test(x)).sort();
-  const latest = runs[runs.length - 1];
-  const runDir = latest ? path.join(resultsBase, latest) : null;
+  // Use the controlled directory structure
+  const runDir = dir;
+  const latest = path.basename(dir);
 
   // Use audits.json to categorize result when available
   let category = 'success';
@@ -176,16 +174,7 @@ export async function runWorkflow(id, { headless, debug, onLog } = {}) {
     copyIfExists(path.join(runDir, 'browser.log'), path.join(targetFolder, 'browser.log'));
     copyIfExists(path.join(runDir, 'network.log'), path.join(targetFolder, 'network.log'));
 
-    // Copy screenshots if available
-    const screenshotsDir = path.join(getProjectDir(cwd), 'screenshots');
-    try {
-      const files = fs.existsSync(screenshotsDir) ? fs.readdirSync(screenshotsDir) : [];
-      for (const f of files) {
-        if (f.includes('initial') || f.includes('final')) {
-          copyIfExists(path.join(screenshotsDir, f), path.join(targetFolder, f));
-        }
-      }
-    } catch {}
+    // Screenshots are now saved directly in each run directory, no need to copy from separate location
   }
 
 
