@@ -1,9 +1,26 @@
 import fs from 'fs';
 import path from 'path';
-import { ensureProjectDirs, getProjectDir } from './project.js';
+import { ensureProjectDirs, getProjectDir, extractCleanMarkdown } from './project.js';
 import { executeCustomPrompt, checkAuthentication } from './auggie-integration.js';
+import { debugLogger } from './debug.js';
+
 import { runProjectTest } from './test.js';
 import { buildWorkflowPrompt } from './prompts/prompt.workflow.js';
+// Safeguards to prevent E2BIG when building /wdupdate prompt
+const MAX_WFUP_CONTEXT = Number(process.env.QLOOD_MAX_WFUP_CONTEXT || process.env.QLOOD_MAX_WF_CONTEXT || 8000);
+const MAX_WFUP_STRUCTURE = Number(process.env.QLOOD_MAX_WFUP_STRUCTURE || process.env.QLOOD_MAX_WF_STRUCTURE || 8000);
+const MAX_WFUP_CONFIG = Number(process.env.QLOOD_MAX_WFUP_CONFIG || process.env.QLOOD_MAX_WF_CONFIG || 4000);
+const MAX_WFUP_PREV = Number(process.env.QLOOD_MAX_WFUP_PREV || 12000);
+
+function truncateSection(text = '', limit = 20000, label = 'section') {
+  const str = String(text || '');
+  if (str.length <= limit) return str;
+  const truncated = str.slice(0, limit);
+  const omitted = str.length - limit;
+  try { debugLogger.writeDebug && debugLogger.writeDebug('TRUNCATE', { label, originalLength: str.length, limit, omitted }); } catch {}
+  return `${truncated}\n\n...[truncated ${omitted} chars from ${label}]`;
+}
+
 
 // Import the getProjectContext function from the prompt file
 function getProjectContext(cwd = process.cwd()) {
@@ -11,11 +28,11 @@ function getProjectContext(cwd = process.cwd()) {
   const contextPath = path.join(base, 'notes', 'context.md');
   const structurePath = path.join(base, 'project-structure.json');
   const configPath = path.join(base, 'qlood.json');
-  
+
   let context = '';
   let structure = '';
   let config = '';
-  
+
   try {
     if (fs.existsSync(contextPath)) {
       context = fs.readFileSync(contextPath, 'utf-8');
@@ -23,7 +40,7 @@ function getProjectContext(cwd = process.cwd()) {
   } catch (e) {
     // ignore
   }
-  
+
   try {
     if (fs.existsSync(structurePath)) {
       structure = fs.readFileSync(structurePath, 'utf-8');
@@ -31,7 +48,7 @@ function getProjectContext(cwd = process.cwd()) {
   } catch (e) {
     // ignore
   }
-  
+
   try {
     if (fs.existsSync(configPath)) {
       config = fs.readFileSync(configPath, 'utf-8');
@@ -39,7 +56,7 @@ function getProjectContext(cwd = process.cwd()) {
   } catch (e) {
     // ignore
   }
-  
+
   return { context, structure, config };
 }
 
@@ -101,7 +118,7 @@ export async function addWorkflow(description, { cwd = process.cwd() } = {}) {
   const prompt = buildWorkflowPrompt(description, cwd);
 
   const res = await executeCustomPrompt(prompt, { usePrintFormat: true });
-  const content = (res.success ? res.stdout : '').trim();
+  const content = extractCleanMarkdown((res.success ? res.stdout : '').trim());
   const final = content && content.length > 50 ? content : `# ${description}\n\n1. Open the app homepage.\n2. Describe the steps to accomplish: ${description}.\n3. Assert expected UI and network results.\n`;
   fs.writeFileSync(outPath, final);
   return { id, file, path: outPath };
@@ -117,13 +134,18 @@ export async function updateWorkflow(id, { cwd = process.cwd() } = {}) {
     throw new Error('Auggie authentication required. Run `auggie --login`.');
   }
 
-  const prev = fs.readFileSync(p, 'utf-8');
-  const { context, structure, config } = getProjectContext(cwd);
-  
+  // Read and truncate previous workflow and project context to avoid E2BIG
+  const prevRaw = fs.readFileSync(p, 'utf-8');
+  const prev = truncateSection(prevRaw, MAX_WFUP_PREV, 'existing-workflow');
+  let { context, structure, config } = getProjectContext(cwd);
+  context = truncateSection(context, MAX_WFUP_CONTEXT, 'context');
+  structure = truncateSection(structure, MAX_WFUP_STRUCTURE, 'structure');
+  config = truncateSection(config, MAX_WFUP_CONFIG, 'config');
+
   const contextSection = context ? `\n=== Current Project Context ===\n${context}` : '';
   const structureSection = structure ? `\n=== Project Structure ===\n${structure}` : '';
   const configSection = config ? `\n=== Configuration ===\n${config}` : '';
-  
+
   const prompt = `Update the following end-to-end testing workflow to reflect recent code changes in the project.
 
 INSTRUCTIONS:
@@ -138,9 +160,9 @@ Current Project Information:${contextSection}${structureSection}${configSection}
 
 --- Existing Workflow to Update ---
 ${prev}`;
-  
+
   const res = await executeCustomPrompt(prompt, { usePrintFormat: true });
-  const next = (res.success ? res.stdout : '').trim();
+  const next = extractCleanMarkdown((res.success ? res.stdout : '').trim());
   if (next && next.length > 20) {
     fs.writeFileSync(p, next);
     return { file: wf.file, updated: true };

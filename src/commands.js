@@ -1,6 +1,32 @@
 import { createChrome, ensurePage } from './chrome.js';
 import { getHeadlessMode } from './config.js';
 
+
+// Heuristic detection of sensitive fields to avoid logging secrets
+async function isSensitiveField(page, selector) {
+  try {
+    return await page.$eval(selector, (el) => {
+      const attr = (name) => (el.getAttribute ? (el.getAttribute(name) || '') : '');
+      const type = String(attr('type') || '').toLowerCase();
+      const name = String(attr('name') || '').toLowerCase();
+      const id = String((el.id || '')).toLowerCase();
+      const aria = String(attr('aria-label') || '').toLowerCase();
+      const placeholder = String(attr('placeholder') || '').toLowerCase();
+      if (type === 'password') return true;
+      const blob = `${type} ${name} ${id} ${aria} ${placeholder}`;
+      const keywords = ['password','pass','pwd','secret','token','apikey','api_key','authorization','auth','otp'];
+      return keywords.some(k => blob.includes(k));
+    });
+  } catch (_) {
+    try { return /password|pass|pwd|secret|token|apikey|api_key|authorization|auth|otp/i.test(String(selector)); } catch { return false; }
+  }
+}
+
+function maskedLabel(text) {
+  const len = (text?.length ?? 0);
+  return `[masked ${len} chars]`;
+}
+
 // Best-effort: dismiss common consent/cookie overlays (Google/YouTube and similar)
 export async function dismissConsentIfPresent(page) {
   const selectors = [
@@ -78,7 +104,7 @@ export async function clickCmd(page, selector, { silent = false } = {}) {
     return;
   } catch (error) {
     if (!silent) console.log(`Primary selector failed: ${selector}, trying fallbacks...`);
-    
+
     // If it's a complex selector, try each part individually
     if (selector.includes(',')) {
       const parts = selector.split(',').map(s => s.trim());
@@ -93,7 +119,7 @@ export async function clickCmd(page, selector, { silent = false } = {}) {
         }
       }
     }
-    
+
     // Last resort: try common search button selectors
     const fallbackSelectors = [
       '[aria-label*="Search" i]',
@@ -103,7 +129,7 @@ export async function clickCmd(page, selector, { silent = false } = {}) {
       '.search-button',
       '#search-button'
     ];
-    
+
     for (const fallback of fallbackSelectors) {
       try {
         await page.waitForSelector(fallback, { timeout: 1000 });
@@ -114,7 +140,7 @@ export async function clickCmd(page, selector, { silent = false } = {}) {
         // Continue to next fallback
       }
     }
-    
+
     throw new Error(`All click attempts failed for selector: ${selector}`);
   }
 }
@@ -123,7 +149,9 @@ export async function typeCmd(page, selector, text, { silent = false } = {}) {
   try {
     await page.waitForSelector(selector, { timeout: 10000 });
     await page.type(selector, text);
-    if (!silent) console.log(`Typed into ${selector}: ${text}`);
+    if (!silent) {
+      console.log(`Typed into ${selector}: ${maskedLabel(text)}`);
+    }
   } catch (error) {
     if (error.message.includes('detached')) {
       throw new Error(`Typing failed - page detached: ${selector}`);

@@ -126,7 +126,7 @@ Core testing commands
 - `test <scenario>`                   Run an AI-driven test scenario against your app
 
 Maintenance
-- `delete`                            Delete the `./.qlood` directory to reset initialization (formerly `clean`)
+- (no maintenance commands)
 
 Global options
 - `--headless`                        Run headless Chromium
@@ -170,10 +170,13 @@ See /help or `qlood --help` for low-level commands.
 
 ### Environment
 - `OPENROUTER_API_KEY`: your OpenRouter API key
+- `QLOOD_TEST_USERNAME`: username for login workflows (dev/CI)
+- `QLOOD_TEST_PASSWORD`: password for login workflows (dev/CI)
 
 
 Security note
 - Prefer setting your API key via the TUI (`/key <apiKey>`) to avoid shell history capturing secrets.
+- Provide login credentials via environment variables or a gitignored `.env` file. Avoid passing secrets on the command line; Qlood masks typed text in logs.
 - CLI alternative: `qlood config key <apiKey>` stores it in `~/.qlood/config.json` (never committed).
 
 ### Architecture

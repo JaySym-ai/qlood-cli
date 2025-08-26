@@ -320,7 +320,7 @@ export async function runTui() {
     showToast('API key configured', 'success');
   }
 
-  // Check Auggie authentication  
+  // Check Auggie authentication
   startLoadingAnimation('Checking Auggie authentication...');
   const isAuggieAuthenticated = await checkAuggieAuth();
   stopLoadingAnimation('Authentication check complete', true);
@@ -853,7 +853,7 @@ export async function runTui() {
       } else if (cmd === '/clean') {
         try {
           const base = getProjectDir(process.cwd());
-          const targets = ['debug', 'notes', 'results'].map(d => path.join(base, d));
+          const targets = ['debug', 'results'].map(d => path.join(base, d));
           let removed = 0;
           for (const dir of targets) {
             if (!fs.existsSync(dir)) continue;
@@ -868,7 +868,7 @@ export async function runTui() {
               }
             }
           }
-          addLog(`{green-fg}Cleaned{/} ${removed} item(s) from {bold}.qlood/debug{/}, {bold}.qlood/notes{/}, and {bold}.qlood/results{/}.`);
+          addLog(`{green-fg}Cleaned{/} ${removed} item(s) from {bold}.qlood/debug{/} and {bold}.qlood/results{/}.`);
           showToast('Workspace cleaned', 'success');
         } catch (e) {
           addLog(`{red-fg}clean error:{/} ${e?.message || e}`);
@@ -885,10 +885,18 @@ export async function runTui() {
         addLog('  {cyan-fg}/wdupdate <id>{/} - Update workflow to match code changes');
         addLog('  {cyan-fg}/wfdel <id>{/} - Delete a workflow');
         addLog('  {cyan-fg}/context [--update]{/} - View or update project context');
-        addLog('  {cyan-fg}/clean{/} - Delete all files under ./.qlood/debug, ./.qlood/notes, ./.qlood/results');
+        addLog('  {cyan-fg}/clean{/} - Delete all files under ./.qlood/debug and ./.qlood/results');
         addLog('  {cyan-fg}/quit{/} - Exit qlood');
         addLog('');
         addLog('All input must start with {bold}/{/} (e.g., {cyan-fg}/wf 1{/}).');
+
+
+        // Credentials management help
+        addLog('');
+        addLog('{bold}Testing credentials (safe handling){/}');
+        addLog('  - Provide credentials via env vars or a gitignored .env file:');
+        addLog('    {cyan-fg}QLOOD_TEST_USERNAME{/}, {cyan-fg}QLOOD_TEST_PASSWORD{/}');
+        addLog('  - Avoid passing secrets on the command line; typed text is masked in logs.');
 
       } else if (cmd === '/tools') {
         addLog('Available tools:');

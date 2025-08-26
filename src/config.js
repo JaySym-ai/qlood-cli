@@ -85,3 +85,12 @@ export function getHeadlessMode() {
   const cfg = loadConfig();
   return cfg.headlessMode !== undefined ? cfg.headlessMode : true; // Default to true (headless)
 }
+
+// Test credentials helpers (read-only)
+export function getTestUsername() {
+  return process.env.QLOOD_TEST_USERNAME || '';
+}
+
+export function getTestPassword() {
+  return process.env.QLOOD_TEST_PASSWORD || '';
+}

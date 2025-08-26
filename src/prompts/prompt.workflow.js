@@ -4,17 +4,33 @@
 import fs from 'fs';
 import path from 'path';
 import { getProjectDir } from '../project.js';
+import { debugLogger } from '../debug.js';
+
+
+// Limit sizes to avoid E2BIG when passing prompt as CLI arg
+const MAX_CONTEXT_CHARS = Number(process.env.QLOOD_MAX_WF_CONTEXT || 8000);
+const MAX_STRUCTURE_CHARS = Number(process.env.QLOOD_MAX_WF_STRUCTURE || 8000);
+const MAX_CONFIG_CHARS = Number(process.env.QLOOD_MAX_WF_CONFIG || 4000);
+
+function truncateSection(text = '', limit = 20000, label = 'section') {
+  const str = String(text || '');
+  if (str.length <= limit) return str;
+  const truncated = str.slice(0, limit);
+  const omitted = str.length - limit;
+  try { debugLogger.writeDebug && debugLogger.writeDebug('TRUNCATE', { label, originalLength: str.length, limit, omitted }); } catch {}
+  return `${truncated}\n\n...[truncated ${omitted} chars from ${label}]`;
+}
 
 function getProjectContext(cwd = process.cwd()) {
   const projectDir = getProjectDir(cwd);
   const contextPath = path.join(projectDir, 'notes', 'context.md');
   const structurePath = path.join(projectDir, 'project-structure.json');
   const configPath = path.join(projectDir, 'qlood.json');
-  
+
   let context = '';
   let structure = '';
   let config = '';
-  
+
   try {
     if (fs.existsSync(contextPath)) {
       context = fs.readFileSync(contextPath, 'utf-8');
@@ -22,7 +38,7 @@ function getProjectContext(cwd = process.cwd()) {
   } catch (e) {
     // ignore
   }
-  
+
   try {
     if (fs.existsSync(structurePath)) {
       structure = fs.readFileSync(structurePath, 'utf-8');
@@ -30,7 +46,7 @@ function getProjectContext(cwd = process.cwd()) {
   } catch (e) {
     // ignore
   }
-  
+
   try {
     if (fs.existsSync(configPath)) {
       config = fs.readFileSync(configPath, 'utf-8');
@@ -38,14 +54,18 @@ function getProjectContext(cwd = process.cwd()) {
   } catch (e) {
     // ignore
   }
-  
+
+  // Truncate sections to keep overall prompt size reasonable and avoid E2BIG
+  context = truncateSection(context, MAX_CONTEXT_CHARS);
+  structure = truncateSection(structure, MAX_STRUCTURE_CHARS);
+  config = truncateSection(config, MAX_CONFIG_CHARS);
   return { context, structure, config };
 }
 
 export function buildWorkflowPrompt(description = '', cwd = process.cwd()) {
   const trimmed = String(description || '').trim();
   const goal = trimmed || 'End-to-end scenario';
-  
+
   const { context, structure, config } = getProjectContext(cwd);
 
   return `You are generating a detailed, step-by-step Playwright-oriented end-to-end testing workflow for this specific repository.

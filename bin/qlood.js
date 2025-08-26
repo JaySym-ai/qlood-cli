@@ -252,14 +252,7 @@ program
     await deleteQloodDir();
   });
 
-// Backwards compatibility: keep deprecated 'clean' command
-program
-  .command('clean')
-  .description('[DEPRECATED] Use "delete" instead')
-  .action(async () => {
-    console.warn('The "clean" command is deprecated. Use "qlood delete".');
-    await deleteQloodDir();
-  });
+
 
 // Auggie integration commands
 program

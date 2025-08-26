@@ -20,6 +20,8 @@ import { composeGuidelines } from './prompts/index.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { extractCleanMarkdown } from './project.js';
+
 function getQloodDir() {
   const dir = path.join(process.cwd(), '.qlood');
   try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch {}
@@ -433,7 +435,11 @@ const toolRegistry = {
       const p = resolveQloodPath(String(args.path));
       const dir = path.dirname(p);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      const data = String(args.content);
+      let data = String(args.content);
+      // Sanitize Auggie-style thinking for markdown-like files
+      if (/\.md$/i.test(p) || /\.markdown$/i.test(p) || /README/i.test(p)) {
+        data = extractCleanMarkdown(data);
+      }
       if (args.append) fs.appendFileSync(p, data, 'utf8'); else fs.writeFileSync(p, data, 'utf8');
       return { path: path.relative(getQloodDir(), p), bytes: Buffer.byteLength(data, 'utf8'), append: !!args.append };
     }
@@ -669,10 +675,10 @@ ${additionalInstructions}`;
     currentAbortController = controller;
     // Count this LLM API call for live metrics
     try { incLLMCalls(); } catch {}
-    
+
     // Log the detailed LLM request
     debugLogger.logLLMCall(effectiveModel, body.messages, null);
-    
+
     const resp = await fetch(OPENROUTER_URL, {
       method: 'POST',
       headers: {
@@ -698,7 +704,7 @@ ${additionalInstructions}`;
     const content = rawContent
       .replace(/[\u{10000}-\u{10FFFF}]/gu, '')
       .replace(/[^\x00-\xFF]/g, '?');
-    
+
     // Log the detailed LLM response
     debugLogger.logLLMCall(effectiveModel, body.messages, content);
 
