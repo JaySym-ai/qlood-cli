@@ -2,7 +2,6 @@ import fs from 'fs';
 import path from 'path';
 import { executeCustomPrompt } from './auggie-integration.js';
 import { initializePrompt } from './prompts/prompt.initialize.js';
-import { simpleInitializePrompt } from './prompts/prompt.initialize-simple.js';
 
 export function getProjectDir(cwd = process.cwd()) {
   return path.join(cwd, '.qlood'); // project-local folder ./.qlood
@@ -254,18 +253,7 @@ export async function generateProjectContext(cwd = process.cwd(), options = {}) 
       timeout: 120000 // 2 minutes timeout for project analysis
     });
 
-    // If the comprehensive prompt fails, try the simple one
-    if (!result.success) {
-      if (!options.silent) {
-        console.log('Comprehensive analysis failed, trying simplified analysis...');
-      }
 
-      result = await executeCustomPrompt(simpleInitializePrompt, {
-        cwd,
-        usePrintFormat: true,
-        timeout: 60000 // 1 minute timeout for simple analysis
-      });
-    }
 
     // If both Auggie attempts fail, use manual fallback
     if (!result.success) {
