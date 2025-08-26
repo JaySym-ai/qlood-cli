@@ -14,7 +14,7 @@ export function ensureProjectDirs(cwd = process.cwd()) {
     base,
     path.join(base, 'notes'),
     path.join(base, 'screenshots'),
-    path.join(base, 'runs'),
+    path.join(base, 'results'),
     path.join(base, 'workflows'),
   ];
   for (const d of dirs) {
@@ -243,7 +243,7 @@ export async function generateProjectContext(cwd = process.cwd(), options = {}) 
   try {
     // Don't log here if called from TUI (it will handle the animation)
     if (!options.silent) {
-      console.log('Generating project context with Auggie...');
+      console.log('Generating project context with Auggie... This may take several minutes.');
     }
 
     // Try the comprehensive prompt first
@@ -397,6 +397,15 @@ export async function ensureProjectInit({ cwd = process.cwd(), force = false, sk
   let wasInitialized = false;
 
   if (!fs.existsSync(p) || force) {
+    // Migration: remove legacy ./.qlood/runs if present and ensure ./.qlood/results exists
+    try {
+      const legacyRuns = path.join(base, 'runs');
+      if (fs.existsSync(legacyRuns)) {
+        fs.rmSync(legacyRuns, { recursive: true, force: true });
+      }
+    } catch {}
+    try { fs.mkdirSync(path.join(base, 'results'), { recursive: true }); } catch {}
+
     const detected = detectProjectConfig(cwd);
     saveProjectConfig(detected || defaultProjectConfig(), cwd);
     createBasicWorkflow(cwd);

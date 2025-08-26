@@ -335,7 +335,7 @@ export async function runTui() {
       const contextPath = path.join(getProjectDir(process.cwd()), 'notes', 'context.md');
       if (!fs.existsSync(contextPath)) {
         addLog('{cyan-fg}Generating missing project context...{/}');
-        startLoadingAnimation('Analyzing project with Auggie...');
+        startLoadingAnimation('Analyzing project with Auggie... This may take several minutes.');
 
         generateProjectContext(process.cwd(), { silent: true }).then(success => {
           if (success) {
@@ -409,7 +409,7 @@ export async function runTui() {
       // Now generate context with animation (only if authenticated)
       const authResult = await checkAuthentication();
       if (authResult.success && authResult.authenticated) {
-        startLoadingAnimation('Generating project context with Auggie...');
+        startLoadingAnimation('Generating project context with Auggie... This may take several minutes.');
 
         try {
           const success = await generateProjectContext(process.cwd(), { silent: true });
@@ -437,7 +437,7 @@ export async function runTui() {
       // Generate context with animation (only if authenticated)
       const authResult = await checkAuthentication();
       if (authResult.success && authResult.authenticated) {
-        startLoadingAnimation('Updating project context with Auggie...');
+        startLoadingAnimation('Updating project context with Auggie... This may take several minutes.');
 
         try {
           const success = await generateProjectContext(process.cwd(), { silent: true });
@@ -532,7 +532,7 @@ export async function runTui() {
           // Now generate context with animation (only if authenticated)
           const authResult = await checkAuthentication();
           if (authResult.success && authResult.authenticated) {
-            startLoadingAnimation('Generating project context with Auggie...');
+            startLoadingAnimation('Generating project context with Auggie... This may take several minutes.');
 
             try {
               const success = await generateProjectContext(process.cwd(), { silent: true });
@@ -571,7 +571,7 @@ export async function runTui() {
           saveProjectStructure(currentStructure, process.cwd());
 
           // Generate context with animation
-          startLoadingAnimation('Updating project context with Auggie...');
+          startLoadingAnimation('Updating project context with Auggie... This may take several minutes.');
 
           const authResult = await checkAuthentication();
           if (authResult.success && authResult.authenticated) {

@@ -47,6 +47,24 @@ import fs from 'fs/promises';
 
 dotenv.config();
 
+// Simple CLI spinner for long-running tasks
+function startCliSpinner(message) {
+  const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+  let i = 0;
+  const base = `${message}`;
+  process.stdout.write(base + ' ');
+  const timer = setInterval(() => {
+    const f = frames[i = (i + 1) % frames.length];
+    process.stdout.write(`\r${base} ${f}`);
+  }, 100);
+  const stop = (finalMessage, ok = true) => {
+    clearInterval(timer);
+    const msg = finalMessage || base;
+    process.stdout.write(`\r${msg} ${ok ? '✓' : '✗'}\n`);
+  };
+  return { stop };
+}
+
 const program = new Command();
 
 // SIGINT handling: first Ctrl+C cancels current action (closes browser),
@@ -141,7 +159,7 @@ program
 program
   .command('config')
   .description('Manage qlood configuration (model, api key, prompt)')
-  
+
   .addCommand(new Command('key')
     .argument('<apiKey>')
     .description('Set OpenRouter API key (stored in ~/.qlood/config.json)')
@@ -156,7 +174,7 @@ program
     .action((instructions) => { setSystemInstructions(instructions); console.log('System instructions updated'); }))
   .addCommand(new Command('debug')
     .description('Enable debug mode for detailed logging')
-    .action(() => { 
+    .action(() => {
       debugLogger.enable(process.cwd());
       console.log('Debug mode enabled. Logs will be saved to ./.qlood/debug/');
       console.log(`Debug file: ${debugLogger.getDebugFile()}`);
@@ -184,19 +202,18 @@ program
   .command('init-context')
   .description('Generate or regenerate the project context file at ./.qlood/notes/context.md')
   .action(async () => {
-    console.log('Initializing project context...');
+    const spinner = startCliSpinner('Generating project context with Auggie... This may take several minutes.');
     try {
-      // Don't pass silent option here - we want console output for CLI command
-      const success = await generateProjectContext(process.cwd());
+      const success = await generateProjectContext(process.cwd(), { silent: true });
       if (success) {
-        console.log('✓ Project context generated successfully');
+        spinner.stop('Project context generated successfully', true);
         process.exit(0);
       } else {
-        console.error('✗ Failed to generate project context');
+        spinner.stop('Could not generate project context', false);
         process.exit(1);
       }
     } catch (error) {
-      console.error(`✗ Error generating project context: ${error.message}`);
+      spinner.stop(`Error generating project context: ${error.message}`, false);
       process.exit(1);
     }
   });
@@ -300,11 +317,13 @@ program
       }
 
       // Otherwise, (re)generate using Auggie and then print
-      console.log(cmdOpts.update ? 'Updating project context with Auggie...' : 'Generating project context with Auggie...');
+      const spinner = startCliSpinner((cmdOpts.update ? 'Updating' : 'Generating') + ' project context with Auggie... This may take several minutes.');
       const ok = await generateProjectContext(cwd, { silent: true });
       if (!ok) {
-        console.error('✗ Failed to generate project context with Auggie');
+        spinner.stop('Failed to generate project context with Auggie', false);
         process.exit(1);
+      } else {
+        spinner.stop('Project context ready', true);
       }
 
       // Read the freshly generated file

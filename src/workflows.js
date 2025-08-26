@@ -96,7 +96,7 @@ export function deleteWorkflow(id, { cwd = process.cwd() } = {}) {
 }
 
 function ensureResultsBase(cwd = process.cwd()) {
-  const base = path.join(getProjectDir(cwd), 'result');
+  const base = path.join(getProjectDir(cwd), 'results');
   if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true });
   return base;
 }
@@ -125,11 +125,11 @@ export async function runWorkflow(id, { headless, debug, onLog } = {}) {
   const scenario = fs.readFileSync(p, 'utf-8');
 
   const { dir, success } = createResultStructure(id, cwd);
-  // Delegate to project test runner; it will create artifacts under ./.qlood/runs/<ts>
+  // Delegate to project test runner; it will create artifacts under ./.qlood/results/<ts>
   await runProjectTest(scenario, { headless, debug, onLog });
 
   // Save a minimal success report referencing artifacts
-  const report = `# Workflow ${id} Result\n\n- Workflow file: ${wf.file}\n- Timestamp dir: ${path.basename(dir)}\n- See ./.qlood/runs for detailed artifacts.\n`;
+  const report = `# Workflow ${id} Result\n\n- Workflow file: ${wf.file}\n- Timestamp dir: ${path.basename(dir)}\n- See ./.qlood/results for detailed artifacts.\n`;
   fs.writeFileSync(path.join(success, 'report.md'), report);
   return { resultDir: dir };
 }

@@ -1,15 +1,40 @@
 ## qlood-cli
 
+> Qlood CLI is the official, open-source companion to qlood.com for next‑generation AI testing.
+>
+> IMPORTANT: Qlood CLI is the first open‑source tool to use Auggie (augmentcode.com) CLI in non‑interactive mode. This project exists to demonstrate the power of Auggie’s Non‑Interactive mode for intelligent, context‑aware testing.
+
+Highlights
+- Uses AugmentCode (Auggie) to index your repo for deep project context and smarter testing decisions
+- Headless by default with Playwright (bundled Chromium); great for CI and local dev
+- Non‑interactive Auggie flows to run comprehensive checks automatically
+- Results saved under ./.qlood/results/ with success/warning/error reports
+- Workflows: create, run, update, and delete AI‑generated end‑to‑end test plans
+
+What you get (from qlood.com)
+- AI_SUPERPOWER: tests like a pro, thinks like a user, catches what humans miss
+- LIGHTNING_FAST: ideal for CI/CD pipelines and rapid iteration
+- BULLETPROOF: comprehensive analysis to keep your app production‑ready
+
+### Why Auggie (augmentcode.com)
+Qlood CLI is built around Auggie, the AugmentCode.com CLI, running in non‑interactive mode.
+
+- Code‑aware indexing: Auggie scans and understands your codebase to build a rich, semantic context of your project
+- Smarter actions: with this context, Qlood makes better choices for navigation, selectors, state, and validations
+- Continuous adaptation: workflows can be updated as your code changes, keeping tests relevant
+- Learn more: https://www.augmentcode.com/
+
+
 Open-source CLI to help you test your own app. qlood initializes a project-local `./.qlood/` folder, then uses AI-driven browser automation (Chromium via Playwright + OpenRouter LLMs) to explore and find bugs in your web app. Mobile emulators (Android/iOS) are on the roadmap.
 
 - One-package install with bundled Chromium
-- Project-local state in `./.qlood` (config, runs, screenshots, notes)
+- Project-local state in `./.qlood` (config, results, screenshots, notes)
 - AI-assisted testing flows; will open your app and drive interactions
 - Low-level browser commands still available for power users
 
 ### Why qlood
 - Fast local setup: `qlood` prompts to create `./.qlood` in your repo.
-- Reproducible runs: artifacts saved under `./.qlood/runs/` and `./.qlood/screenshots/`.
+- Reproducible runs: artifacts saved under `./.qlood/results/` and `./.qlood/screenshots/`.
 - Adaptable: define your dev server URL and start command; the tool can launch it if needed.
 
 ### Install
@@ -32,13 +57,13 @@ Open-source CLI to help you test your own app. qlood initializes a project-local
 This is a concise, terminal-first guide to using qlood.
 
 - Install:
-  
+
   ```bash
   npm install -g qlood-cli
   ```
 
 - Launch:
-  
+
   ```bash
   qlood
   ```
@@ -46,13 +71,13 @@ This is a concise, terminal-first guide to using qlood.
 - Initialize: qlood asks to initialize your project. Accepting also allows the AugmentCode CLI (Auggie) to index your project so it can take action and perform testing.
 
 - Help: inside qlood, run:
-  
+
   ```bash
   /help
   ```
 
 - Useful workflow commands:
-  
+
   ```bash
   /wfadd I need a workflow that test the user signup and login
   ```
@@ -79,7 +104,7 @@ This is a concise, terminal-first guide to using qlood.
   - Deletes workflow 1.
 
 - Results:
-  - Each run produces `./.qlood/result/wf#-%datetime%/` with subfolders:
+  - Each run produces `./.qlood/results/wf#-%datetime%/` with subfolders:
     - `/success`: high-level report and references to artifacts
     - `/warning`: potential issues and `fix-prompt.md`
     - `/error`: errors with screenshots and `fix-prompt.md`
@@ -121,10 +146,10 @@ Project config (`./.qlood/qlood.json`)
 - `browser.headless`: Default headless mode for tests (default `false`)
 
 Artifacts
-- `./.qlood/runs/<timestamp>/agent.log` — AI agent logs for the run
-- `./.qlood/runs/<timestamp>/browser.log` — page console and errors
-- `./.qlood/runs/<timestamp>/network.log` — request/response summary
-- `./.qlood/runs/<timestamp>/report.html` — minimal HTML report linking artifacts
+- `./.qlood/results/<timestamp>/agent.log` — AI agent logs for the run
+- `./.qlood/results/<timestamp>/browser.log` — page console and errors
+- `./.qlood/results/<timestamp>/network.log` — request/response summary
+- `./.qlood/results/<timestamp>/report.html` — minimal HTML report linking artifacts
 - `./.qlood/screenshots/<timestamp>-initial.png` — before test
 - `./.qlood/screenshots/<timestamp>-final.png` — after test
 - `./.qlood/notes/` — free-form notes you keep
@@ -133,14 +158,15 @@ Interactive TUI
 - `qlood` or `qlood tui`              Launches the TUI (prompts to init if needed)
 - Slash commands: `/test <scenario>`, `/key <apiKey>`, `/open <url>`, `/goto <url>`, `/click <selector>`, `/type <selector> <text>`, `/tools`, `/quit`
 - Input rule: all commands must start with `/` (use `/help`)
+### Playwright/Chromium notes (headless, CI, sandbox)
+- Headless mode: Qlood runs with Playwright in headless mode by default for speed and CI compatibility. Use `--debug` to see the browser.
+- Permissions: Some CI environments require additional flags. If Chromium fails to launch, try setting env `PLAYWRIGHT_BROWSERS_PATH=0` and ensure Playwright is installed, or run `npx playwright install chromium`.
+- Linux sandbox: In containerized Linux CI, you may need to disable sandboxing: set `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1` if you bundle Chromium elsewhere, or run Chromium with `--no-sandbox` (only in trusted CI) by configuring your CI container accordingly.
+- GPU/Display: Headless has no display requirements. For non-headless debugging in CI, use Xvfb or a container with a virtual display.
+
 - Ctrl+C: first press cancels current action, second within 1.5s exits
 
-Low-level browser commands (optional)
-- `open <url>`                        Open a new Chromium window to URL
-- `goto <url>`                        Navigate current tab to URL
-- `click <selector>`                  Click by CSS selector
-- `type <selector> <text>`            Type into element by selector
-- `screenshot [path]`                 Save screenshot (default `screenshot.png`)
+See /help or `qlood --help` for low-level commands.
 
 ### Environment
 - `OPENROUTER_API_KEY`: your OpenRouter API key

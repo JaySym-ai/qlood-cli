@@ -31,7 +31,7 @@ export async function runProjectTest(goal, { headless, debug, onLog } = {}) {
 
   const projectDir = ensureProjectDirs(cwd);
   const runId = new Date().toISOString().replace(/[:.]/g, '-');
-  const runDir = path.join(projectDir, 'runs', runId);
+  const runDir = path.join(projectDir, 'results', runId);
   fs.mkdirSync(runDir, { recursive: true });
 
   const log = (m) => { if (onLog) onLog(m); else console.log(m); };
@@ -114,9 +114,9 @@ export async function runProjectTest(goal, { headless, debug, onLog } = {}) {
   <li><b>Artifacts dir:</b> ${runDir}</li>
   <li><b>Initial screenshot:</b> .qlood/screenshots/${path.basename(initialShot)}</li>
   <li><b>Final screenshot:</b> .qlood/screenshots/${runId}-final.png</li>
-  <li><b>Agent log:</b> ${path.join('.qlood','runs',runId,'agent.log')}</li>
-  <li><b>Browser log:</b> ${path.join('.qlood','runs',runId,'browser.log')}</li>
-  <li><b>Network log:</b> ${path.join('.qlood','runs',runId,'network.log')}</li>
+  <li><b>Agent log:</b> ${path.join('.qlood','results',runId,'agent.log')}</li>
+  <li><b>Browser log:</b> ${path.join('.qlood','results',runId,'browser.log')}</li>
+  <li><b>Network log:</b> ${path.join('.qlood','results',runId,'network.log')}</li>
   </ul>
 <p>Open the artifacts locally to inspect details.</p>
 `;
