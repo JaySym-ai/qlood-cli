@@ -201,34 +201,47 @@ program
     }
   });
 
-// Clean command to remove .qlood directory
+// Delete command to remove .qlood directory
+async function deleteQloodDir() {
+  const cwd = process.cwd();
+  const qloodDir = getProjectDir(cwd);
+
+  // Check if .qlood directory exists using fs/promises
+  try {
+    await fs.access(qloodDir);
+  } catch {
+    console.log('No .qlood directory found in the current project.');
+    return;
+  }
+
+  console.log(`Removing ${qloodDir}...`);
+
+  try {
+    // Use fs.rm with recursive option for directory removal
+    await fs.rm(qloodDir, { recursive: true, force: true });
+    console.log('✓ Successfully removed .qlood directory');
+    console.log('The project will be reinitialized on the next run.');
+  } catch (error) {
+    console.error(`✗ Error removing .qlood directory: ${error.message}`);
+    console.error('You may need to remove it manually.');
+    process.exit(1);
+  }
+}
+
+program
+  .command('delete')
+  .description('Delete the ./.qlood directory to force reinitialization')
+  .action(async () => {
+    await deleteQloodDir();
+  });
+
+// Backwards compatibility: keep deprecated 'clean' command
 program
   .command('clean')
-  .description('Remove the ./.qlood directory to force reinitialization')
+  .description('[DEPRECATED] Use "delete" instead')
   .action(async () => {
-    const cwd = process.cwd();
-    const qloodDir = getProjectDir(cwd);
-
-    // Check if .qlood directory exists using fs/promises
-    try {
-      await fs.access(qloodDir);
-    } catch {
-      console.log('No .qlood directory found in the current project.');
-      return;
-    }
-
-    console.log(`Removing ${qloodDir}...`);
-
-    try {
-      // Use fs.rm with recursive option for directory removal
-      await fs.rm(qloodDir, { recursive: true, force: true });
-      console.log('✓ Successfully removed .qlood directory');
-      console.log('The project will be reinitialized on the next run.');
-    } catch (error) {
-      console.error(`✗ Error removing .qlood directory: ${error.message}`);
-      console.error('You may need to remove it manually.');
-      process.exit(1);
-    }
+    console.warn('The "clean" command is deprecated. Use "qlood delete".');
+    await deleteQloodDir();
   });
 
 // Auggie integration commands

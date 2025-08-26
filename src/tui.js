@@ -9,6 +9,7 @@ import { debugLogger } from './debug.js';
 import { ensureProjectInit, loadProjectConfig, getProjectStructurePath, saveProjectStructure, scanProject, generateProjectContext, getProjectDir } from './project.js';
 import { checkAuthentication } from './auggie-integration.js';
 import { runProjectTest } from './test.js';
+import { addWorkflow, runWorkflow, runAllWorkflows, updateWorkflow, deleteWorkflow, listWorkflows } from './workflows.js';
 
 export async function runTui() {
   // Auto-enable debug logging for this session
@@ -138,6 +139,9 @@ export async function runTui() {
   let working = false;
   let headerHue = 0;
 
+  // Simple output mode: no animations, minimal UI effects
+  const SIMPLE_OUTPUT = true;
+
   // Toasts
   let toastTimer = null;
   let toastBox = null;
@@ -178,7 +182,7 @@ export async function runTui() {
     header.setContent(
       `${brand} {${theme.dim}-fg}AI Test Runner{/}\n` +
       ` ${state}   ${keyState}\n` +
-      ` {${theme.dim}-fg}Use {/}{bold}/test <goal>{/}{${theme.dim}-fg}, or enter a goal for the agent.{/}`
+      ` {${theme.dim}-fg}Use {/}{bold}/test <scenario>{/}{${theme.dim}-fg} or {/}{bold}/help{/}{${theme.dim}-fg}. Commands must start with {/}{bold}/{/}{${theme.dim}-fg}.{/}`
     );
   }
 
@@ -233,71 +237,40 @@ export async function runTui() {
 
   function showWorking() {
     working = true;
-    
-    // Add a working indicator line to the log instead of overlay
+    if (SIMPLE_OUTPUT) {
+      addLog('{dim}Working...{/}');
+      renderHeader();
+      return;
+    }
+    // Animated mode (unused when SIMPLE_OUTPUT=true)
     const workingText = `{${theme.accent}-fg}${spinnerFrames[spinnerIndex]}{/} {dim}Working...{/}`;
-    workingLogLine = blessed.text({
-      parent: log,
-      content: workingText,
-      tags: true,
-      style: { fg: theme.fg }
-    });
-    
-    // Consolidated animation timer to prevent multiple concurrent renders
+    workingLogLine = blessed.text({ parent: log, content: workingText, tags: true, style: { fg: theme.fg } });
     if (!spinnerTimer) {
-      let dotCount = 0;
-      let pulseState = false;
-      
+      let dotCount = 0; let pulseState = false;
       spinnerTimer = setInterval(() => {
-        // Update spinner
         spinnerIndex = (spinnerIndex + 1) % spinnerFrames.length;
-        
-        // Update header
         renderHeader();
-        
-        // Update working log line if it exists
-        if (workingLogLine) {
-          const workingText = `{${theme.accent}-fg}${spinnerFrames[spinnerIndex]}{/} {dim}Working...{/}`;
-          workingLogLine.setContent(workingText);
-        }
-        
-        // Update dots every ~500ms (4 cycles of 120ms)
-        if (spinnerIndex % 4 === 0) {
-          dotCount = dotCount >= 3 ? 0 : dotCount + 1;
-          const dots = '.'.repeat(dotCount);
-          log.setLabel(` qlood - Working${dots} `);
-        }
-        
-        // Update status pulse every ~600ms (5 cycles of 120ms) 
-        if (spinnerIndex % 5 === 0) {
-          pulseState = !pulseState;
-          statusBar.style.fg = pulseState ? theme.accent : theme.dim;
-        }
-        
-        // Single render call for all updates
+        if (workingLogLine) workingLogLine.setContent(`{${theme.accent}-fg}${spinnerFrames[spinnerIndex]}{/} {dim}Working...{/}`);
+        if (spinnerIndex % 4 === 0) { dotCount = dotCount >= 3 ? 0 : dotCount + 1; log.setLabel(` qlood - Working${'.'.repeat(dotCount)} `);} 
+        if (spinnerIndex % 5 === 0) { pulseState = !pulseState; statusBar.style.fg = pulseState ? theme.accent : theme.dim; }
         screen.render();
       }, 120);
     }
   }
 
   function hideWorking() {
-    if (spinnerTimer) { clearInterval(spinnerTimer); spinnerTimer = null; }
-    if (loadingSpinnerTimer) { clearInterval(loadingSpinnerTimer); loadingSpinnerTimer = null; }
-    if (loadingOverlay) { loadingOverlay.hidden = true; }
-    backdrop.hidden = true;
-    
-    // Remove the working indicator line from log
-    if (workingLogLine) {
-      workingLogLine.destroy();
-      workingLogLine = null;
+    if (!SIMPLE_OUTPUT) {
+      if (spinnerTimer) { clearInterval(spinnerTimer); spinnerTimer = null; }
+      if (loadingSpinnerTimer) { clearInterval(loadingSpinnerTimer); loadingSpinnerTimer = null; }
+      if (loadingOverlay) { loadingOverlay.hidden = true; }
+      backdrop.hidden = true;
+      if (workingLogLine) { workingLogLine.destroy(); workingLogLine = null; }
+      statusBar.style.fg = theme.dim;
+      log.setLabel(' qlood ');
+      screen.render();
     }
-    
-    // Reset status bar color and log label
-    statusBar.style.fg = theme.dim;
-    log.setLabel(' qlood ');
     working = false;
     renderHeader();
-    screen.render();
   }
 
   // Helper function to check Auggie authentication
@@ -342,6 +315,7 @@ export async function runTui() {
     // Skip project initialization when not authenticated, but continue with TUI setup
   } else {
     addLog('Type {bold}/help{/} for available commands.');
+    addLog('Tip: Commands must start with {bold}/{/}.');
     addLog('Tip: /test runs an AI test. If not initialized, we will prompt you.');
   }
 
@@ -389,17 +363,14 @@ export async function runTui() {
 
   // Loading animation helper - operates on the main log widget
   function startLoadingAnimation(message) {
+    if (SIMPLE_OUTPUT) { addLog(`{cyan-fg}${message}{/}`); return; }
     const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let frameIndex = 0;
-    // Add the loading message as a new log line
     addLog(`{cyan-fg}${frames[0]} ${message}{/}`);
-
     loadingInterval = setInterval(() => {
-      // Update the last line with the animation
       const content = log.getContent();
       const lines = content.split('\n');
       if (lines.length > 0) {
-        // Update the last line with the current frame
         lines[lines.length - 1] = `{cyan-fg}${frames[frameIndex]} ${message}{/}`;
         log.setContent(lines.join('\n'));
         screen.render();
@@ -409,10 +380,10 @@ export async function runTui() {
   }
 
   function stopLoadingAnimation(finalMessage, isSuccess = true) {
+    if (SIMPLE_OUTPUT) { addLog(isSuccess ? `{green-fg}${finalMessage}{/}` : `{yellow-fg}${finalMessage}{/}`); return; }
     if (loadingInterval) {
       clearInterval(loadingInterval);
       loadingInterval = null;
-      // Update the last line with the final message
       const content = log.getContent();
       const lines = content.split('\n');
       if (lines.length > 0) {
@@ -433,7 +404,7 @@ export async function runTui() {
       // Initialize without context generation (we'll do it with animation)
       const result = await ensureProjectInit({ skipContext: true });
       const cfg = loadProjectConfig(process.cwd());
-      addLog(`{green-fg}Initialized ./.qlood{/} (url: ${cfg?.devServer?.url || 'n/a'}, start: ${cfg?.devServer?.start || 'n/a'})`);
+      addLog(`{green-fg}Initialized ./.qlood{/}`);
 
       // Now generate context with animation (only if authenticated)
       const authResult = await checkAuthentication();
@@ -455,7 +426,7 @@ export async function runTui() {
         addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
       }
 
-      addLog('You can now run a test with {bold}/test <your scenario>{/} or type a goal for the agent.');
+      addLog('You can now run a test with {bold}/test <your scenario>{/}.');
       showToast('Project initialized', 'success');
       expectingInitConfirm = false;
     }
@@ -529,7 +500,7 @@ export async function runTui() {
       screen.render();
     }, 700);
   }
-  startHeaderAnim();
+  if (!SIMPLE_OUTPUT) startHeaderAnim();
 
   // Command history (simple)
   const history = [];
@@ -556,7 +527,7 @@ export async function runTui() {
           // Initialize without context generation (we'll do it with animation)
           const result = await ensureProjectInit({ skipContext: true });
           const cfg = loadProjectConfig(process.cwd());
-          addLog(`{green-fg}Initialized ./.qlood{/} (url: ${cfg?.devServer?.url || 'n/a'}, start: ${cfg?.devServer?.start || 'n/a'})`);
+          addLog(`{green-fg}Initialized ./.qlood{/}`);
 
           // Now generate context with animation (only if authenticated)
           const authResult = await checkAuthentication();
@@ -578,7 +549,7 @@ export async function runTui() {
             addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
           }
 
-          addLog('You can now run a test with {bold}/test <your scenario>{/} or type a goal for the agent.');
+          addLog('You can now run a test with {bold}/test <your scenario>{/}.');
           showToast('Project initialized', 'success');
           expectingInitConfirm = false;
           return;
@@ -697,6 +668,73 @@ export async function runTui() {
         await withPage((page) => typeCmd(page, sel, text, { silent: true }));
         addLog(`Typed into ${sel}`);
         showToast('Typed', 'info');
+      } else if (cmd.startsWith('/wfadd ')) {
+        const desc = cmd.replace('/wfadd ', '').trim();
+        if (!desc) return addLog('Usage: /wfadd <description>');
+        const authResult = await checkAuthentication();
+        if (!authResult.success || !authResult.authenticated) {
+          addLog(`{red-fg}❌ Authentication required to create workflows.{/}`);
+          addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
+          showToast('Login required', 'error');
+          return;
+        }
+        try {
+          const { id, file } = await addWorkflow(desc);
+          addLog(`{green-fg}Workflow created{/}: ${file} (id: ${id})`);
+        } catch (e) {
+          addLog(`{red-fg}wfadd error:{/} ${e?.message || e}`);
+        }
+      } else if (cmd.startsWith('/wfdel ')) {
+        const id = Number(cmd.replace('/wfdel ', '').trim());
+        if (!id) return addLog('Usage: /wfdel <id>');
+        try {
+          const { file } = deleteWorkflow(id);
+          addLog(`{yellow-fg}Workflow deleted{/}: ${file}`);
+        } catch (e) {
+          addLog(`{red-fg}wfdel error:{/} ${e?.message || e}`);
+        }
+      } else if (cmd.startsWith('/wdupdate ')) {
+        const id = Number(cmd.replace('/wdupdate ', '').trim());
+        if (!id) return addLog('Usage: /wdupdate <id>');
+        const authResult = await checkAuthentication();
+        if (!authResult.success || !authResult.authenticated) {
+          addLog(`{red-fg}❌ Authentication required to update workflows.{/}`);
+          addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
+          showToast('Login required', 'error');
+          return;
+        }
+        try {
+          const res = await updateWorkflow(id);
+          addLog(res.updated ? `{green-fg}Workflow updated{/}: ${res.file}` : `{yellow-fg}No changes applied{/}: ${res.file}`);
+        } catch (e) {
+          addLog(`{red-fg}wdupdate error:{/} ${e?.message || e}`);
+        }
+      } else if (cmd === '/wfls') {
+        const items = listWorkflows();
+        if (!items.length) { addLog('No workflows found. Use /wfadd to create one.'); }
+        for (const it of items) addLog(`- ${it.id}: ${it.name} (${it.file})`);
+      } else if (cmd.startsWith('/wf ')) {
+        const id = Number(cmd.replace('/wf ', '').trim());
+        if (!id) return addLog('Usage: /wf <id>');
+        showWorking();
+        try {
+          await runWorkflow(id, { headless: getHeadlessMode(), debug: false, onLog: (m) => addLog(m) });
+          addLog('{green-fg}Workflow test completed{/}');
+        } catch (e) {
+          addLog(`{red-fg}wf error:{/} ${e?.message || e}`);
+        } finally {
+          hideWorking();
+        }
+      } else if (cmd === '/wfall') {
+        showWorking();
+        try {
+          const res = await runAllWorkflows({ headless: getHeadlessMode(), debug: false, onLog: (m) => addLog(m) });
+          addLog(`{green-fg}Completed ${res.length} workflow(s){/}`);
+        } catch (e) {
+          addLog(`{red-fg}wfall error:{/} ${e?.message || e}`);
+        } finally {
+          hideWorking();
+        }
       } else if (cmd === '/help') {
         addLog('{bold}Commands:{/}');
         addLog('  {cyan-fg}/key <apiKey>{/}');
@@ -707,13 +745,19 @@ export async function runTui() {
         addLog('  {cyan-fg}/goto <url>{/}');
         addLog('  {cyan-fg}/click <selector>{/}');
         addLog('  {cyan-fg}/type <selector> <text>{/}');
+        addLog('  {cyan-fg}/wfadd <description>{/}');
+        addLog('  {cyan-fg}/wfls{/}');
+        addLog('  {cyan-fg}/wf <id>{/}');
+        addLog('  {cyan-fg}/wfall{/}');
+        addLog('  {cyan-fg}/wdupdate <id>{/}');
+        addLog('  {cyan-fg}/wfdel <id>{/}');
         addLog('  {cyan-fg}/context [--update]{/}');
         addLog('  {cyan-fg}/tools{/}');
         addLog('  {cyan-fg}/test <scenario>{/}');
         addLog('  {cyan-fg}/auggie-login{/} - Guide for Auggie authentication');
         addLog('  {cyan-fg}/quit{/}');
         addLog('');
-        addLog('Free text (no /): run the AI agent with your request.');
+        addLog('All input must start with {bold}/{/} (e.g., {cyan-fg}/test "Sign in"{/}).');
         addLog('{gray-fg}Agent tools:{/} {blue-fg}goto{/}(url), {blue-fg}click{/}(selector), {blue-fg}type{/}(selector,text), {blue-fg}search{/}(selector,query), {blue-fg}pressEnter{/}(), {blue-fg}screenshot{/}(path?), {blue-fg}scroll{/}(y), {blue-fg}cli{/}(command), {blue-fg}done{/}(result)');
       } else if (cmd === '/tools') {
         addLog('Available tools:');
@@ -814,50 +858,9 @@ export async function runTui() {
         screen.destroy();
         process.exit(0);
       } else {
-        // Free text: run AI agent with this as the goal (check authentication first)
-        const authResult = await checkAuthentication();
-        if (!authResult.success || !authResult.authenticated) {
-          addLog(`{red-fg}❌ Authentication required to run AI agent.{/}`);
-          addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
-          showToast('Login required', 'error');
-          return;
-        }
-
-        function sanitizeGoal(text) {
-          // Replace control chars and non-ASCII; strip combining marks
-          return String(text)
-            .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .replace(/[^\x20-\x7E]/g, '?');
-        }
-        // Sanitize the goal upfront to prevent encoding issues
-        const sanitizedCmd = sanitizeGoal(cmd);
-        addLog(`Agent goal: {bold}${sanitizedCmd}{/}`);
-        showWorking();
-        try {
-          await runAgent(sanitizedCmd, {
-            debug: false, // Never show debug info in TUI, but logging is always enabled
-            headless: getHeadlessMode(),
-            promptForApiKey: false,
-            onLog: (m) => addLog(m),
-          });
-        } catch (e) {
-          const msg = e?.message || String(e);
-          addLog(`{red-fg}Agent error:{/} ${msg}`);
-          showToast('Agent error', 'error');
-          if (msg.includes('API key')) {
-            addLog('OpenRouter API key missing. Use /key <apiKey> to set it.');
-          }
-          // Log the full error for debugging
-          addLog(`Full error details: ${JSON.stringify({
-            name: e?.name,
-            message: e?.message,
-            stack: e?.stack?.split('\n')[0]
-          })}`);
-        } finally {
-          hideWorking();
-        }
+        // Free text is not accepted: show help automatically
+        addLog('{yellow-fg}Commands must start with {/}{bold}/{/}{yellow-fg}. Showing help...{/}');
+        await handle('/help');
       } // End of else block
     } catch (e) {
       addLog(`{red-fg}Error:{/} ${e?.message || e}`);

@@ -1,20 +1,16 @@
-# Clean Command (Deprecated)
+# Delete Command Documentation
 
-This command has been renamed to `delete`.
-
-- New command: `qlood delete`
-- Old alias: `qlood clean` (still works, but prints a deprecation notice)
-
-See `DELETE_COMMAND.md` for the up-to-date documentation.
+## Overview
+The `delete` command removes the `./.qlood/` directory from your project, forcing a complete reinitialization on the next run.
 
 ## Usage
 
 ```bash
-# New
+# Using qlood directly
 qlood delete
 
-# Deprecated alias
-qlood clean
+# Or using node
+node bin/qlood.js delete
 ```
 
 ## What It Does
@@ -32,7 +28,7 @@ qlood clean
 
 ## What Gets Removed
 
-When you run `qlood delete` (or the deprecated `qlood clean`), the following are removed:
+When you run `qlood delete`, the following are removed:
 
 - `./.qlood/qlood.json` - Project configuration
 - `./.qlood/project-structure.json` - Cached project structure
