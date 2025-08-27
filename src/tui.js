@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { setMainPrompt, setSystemInstructions } from './config.js';
 import { debugLogger } from './debug.js';
-import { ensureProjectInit, loadProjectConfig, getProjectStructurePath, saveProjectStructure, scanProject, getProjectDir, ensureProjectDirs, extractCleanMarkdown } from './project.js';
+import { ensureProjectInit, loadProjectConfig, getProjectDir, ensureProjectDirs, extractCleanMarkdown } from './project.js';
 import { checkAuthentication, executeCustomPrompt } from './auggie-integration.js';
 
 import { addWorkflow, runWorkflow, runAllWorkflows, updateWorkflow, deleteWorkflow, listWorkflows } from './workflows.js';
@@ -343,7 +343,6 @@ export async function runTui() {
 
   // If project isn't initialized, prompt to initialize (only if authenticated)
   let expectingInitConfirm = false;
-  let expectingStructureUpdateConfirm = false;
   if (isAuggieAuthenticated) {
     const projectCfg = loadProjectConfig(process.cwd());
     if (!projectCfg) {
@@ -357,16 +356,7 @@ export async function runTui() {
     }
   }
 
-  const structurePath = getProjectStructurePath(process.cwd());
-    if (fs.existsSync(structurePath)) {
-      const storedStructure = JSON.parse(fs.readFileSync(structurePath, 'utf-8'));
-      const currentStructure = scanProject(process.cwd());
-      if (JSON.stringify(storedStructure) !== JSON.stringify(currentStructure)) {
-        expectingStructureUpdateConfirm = true;
-        addLog('{yellow-fg}Project structure has changed.{/}')
-        addLog('Update qlood knowledge about the project? {bold}y{/}/n');
-      }
-    }
+  // Removed project structure comparison/update logic
 
   // Loading animation helper - operates on the main log widget
   function startLoadingAnimation(message) {
@@ -411,7 +401,7 @@ export async function runTui() {
 
   // Global Y/N handling when we expect confirmation
   screen.key(['y', 'Y'], async () => {
-    if (!expectingInitConfirm && !expectingStructureUpdateConfirm) return;
+    if (!expectingInitConfirm) return;
     input.clearValue();
     if (expectingInitConfirm) {
       // Initialize project (Auggie handles context)
@@ -435,22 +425,11 @@ export async function runTui() {
       showToast('Project initialized', 'success');
       expectingInitConfirm = false;
     }
-    if (expectingStructureUpdateConfirm) {
-      const currentStructure = scanProject(process.cwd());
-      saveProjectStructure(currentStructure, process.cwd());
-
-      // Context generation removed; only update structure now
-      stopLoadingAnimation('Project structure updated');
-      addLog(`{green-fg}Project structure updated.{/}`);
-      addLog('You can now continue using qlood.');
-      showToast('Project structure updated', 'success');
-      expectingStructureUpdateConfirm = false;
-    }
     input.focus();
     screen.render();
   });
   screen.key(['n', 'N'], () => {
-    if (!expectingInitConfirm && !expectingStructureUpdateConfirm) return;
+    if (!expectingInitConfirm) return;
     input.clearValue();
     if (expectingInitConfirm) {
       addLog('{red-fg}Initialization declined. Exiting qlood...{/}');
@@ -458,11 +437,7 @@ export async function runTui() {
       setTimeout(() => { teardownAndExit(0); }, 300);
       return;
     }
-    if (expectingStructureUpdateConfirm) {
-      addLog('{red-fg}Update declined.{/}');
-      showToast('Update declined', 'warn');
-      expectingStructureUpdateConfirm = false;
-    }
+    // No structure update flow
     input.focus();
     screen.render();
   });
@@ -554,27 +529,7 @@ export async function runTui() {
           return;
         }
       }
-      if (expectingStructureUpdateConfirm) {
-        const ans = cmd.toLowerCase();
-        if (ans === 'y' || ans === 'yes') {
-          const currentStructure = scanProject(process.cwd());
-          saveProjectStructure(currentStructure, process.cwd());
-          stopLoadingAnimation('Project structure updated');
-          addLog(`{green-fg}Project structure updated.{/}`);
-          addLog('You can now continue using qlood.');
-          showToast('Project structure updated', 'success');
-          expectingStructureUpdateConfirm = false;
-          return;
-        } else if (ans === 'n' || ans === 'no') {
-          addLog('{red-fg}Update declined.{/}');
-          showToast('Update declined', 'warn');
-          expectingStructureUpdateConfirm = false;
-          return;
-        } else {
-          addLog('Please answer with y or n.');
-          return;
-        }
-      }
+      // No structure update confirmation flow
       if (cmd.startsWith('/prompt ')) {
         const p = cmd.replace('/prompt ', '').trim();
         if (!p) return addLog('Usage: /prompt <main prompt>');

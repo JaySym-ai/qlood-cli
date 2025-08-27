@@ -1,7 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import { executeCustomPrompt } from './auggie-integration.js';
-import { initializePrompt } from './prompts/prompt.initialize.js';
 
 export function getProjectDir(cwd = process.cwd()) {
   return path.join(cwd, '.qlood'); // project-local folder ./.qlood
@@ -392,15 +390,7 @@ function isImportantEmptyDirectory(dirName) {
   return importantDirs.includes(dirName.toLowerCase());
 }
 
-export function getProjectStructurePath(cwd = process.cwd()) {
-  return path.join(getProjectDir(cwd), 'project-structure.json');
-}
-
-export function saveProjectStructure(structure, cwd = process.cwd()) {
-  ensureProjectDirs(cwd);
-  const p = getProjectStructurePath(cwd);
-  fs.writeFileSync(p, JSON.stringify(structure, null, 2));
-}
+// project-structure.json generation removed; no longer needed
 
 /**
  * Extracts clean markdown content from Auggie's response by removing tool call artifacts
@@ -510,70 +500,7 @@ export function extractCleanMarkdown(rawResponse) {
   return content;
 }
 
-export async function generateProjectContext(cwd = process.cwd(), options = {}) {
-  try {
-    // Don't log here if called from TUI (it will handle the animation)
-    if (!options.silent) {
-      console.log('Generating project context with Auggie... This may take several minutes.');
-    }
-
-    // Try the comprehensive prompt first
-    let result = await executeCustomPrompt(initializePrompt, {
-      cwd,
-      usePrintFormat: true
-    });
-
-
-
-    // Extract clean markdown from the response
-    const cleanMarkdown = result.success ? extractCleanMarkdown(result.stdout) : '';
-
-    // Check if we got meaningful content (not just processing steps)
-    const hasUsefulContent = cleanMarkdown &&
-      cleanMarkdown.length > 100 &&
-      !cleanMarkdown.includes('I\'ll quickly scan') &&
-      !cleanMarkdown.includes('Running these') &&
-      (cleanMarkdown.includes('# ') || cleanMarkdown.includes('## '));
-
-    // If Auggie failed or didn't provide useful content, use manual fallback
-    if (!result.success || !hasUsefulContent) {
-      if (!options.silent) {
-        console.log('Auggie analysis failed, generating basic context manually...');
-      }
-
-      const manualContext = generateManualContext(cwd);
-
-      // Ensure the notes directory exists
-      ensureProjectDirs(cwd);
-
-      // Save the manual context to context.md
-      const contextPath = path.join(getProjectDir(cwd), 'notes', 'context.md');
-      fs.writeFileSync(contextPath, manualContext, 'utf-8');
-
-      if (!options.silent) {
-        console.log(`Basic project context saved to ${contextPath}`);
-      }
-      return true;
-    }
-
-    // Ensure the notes directory exists
-    ensureProjectDirs(cwd);
-
-    // Save the clean markdown to context.md
-    const contextPath = path.join(getProjectDir(cwd), 'notes', 'context.md');
-    fs.writeFileSync(contextPath, cleanMarkdown, 'utf-8');
-
-    if (!options.silent) {
-      console.log(`Project context saved to ${contextPath}`);
-    }
-    return true;
-  } catch (error) {
-    if (!options.silent) {
-      console.error('Error generating project context:', error);
-    }
-    return false;
-  }
-}
+// Initialization no longer generates project context
 
 /**
  * Generate a basic project context manually when Auggie is not available
@@ -1062,8 +989,6 @@ export async function ensureProjectInit({ cwd = process.cwd(), force = false } =
 
     const detected = detectProjectConfig(cwd);
     saveProjectConfig(detected || defaultProjectConfig(), cwd);
-    const structure = scanProject(cwd);
-    saveProjectStructure(structure, cwd);
     wasInitialized = true;
 
     // Create MCP config for Playwright (used by Auggie)
