@@ -32,3 +32,10 @@ export function setMainPrompt(prompt) {
 }
 
 
+
+export function setSystemInstructions(instructions) {
+  const cfg = loadConfig();
+  cfg.systemInstructions = instructions;
+  saveConfig(cfg);
+}
+

@@ -192,7 +192,7 @@ export function extractCleanMarkdown(rawResponse) {
       // Removed legacy tool-call scrubbers (now unused)
       trimmed.startsWith("I'll quickly scan") ||
       trimmed.startsWith("I'll list") ||
-      trimmed.startsWith('Running these') ||
+      trimmed.startsWith('Running these')
     ) {
       continue;
     }

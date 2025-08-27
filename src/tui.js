@@ -6,7 +6,7 @@ import { debugLogger } from './debug.js';
 import { ensureProjectInit, loadProjectConfig, getProjectDir, ensureProjectDirs, extractCleanMarkdown } from './project.js';
 import { checkAuthentication, executeCustomPrompt } from './auggie-integration.js';
 
-import { addWorkflow, runWorkflow, runAllWorkflows, updateWorkflow, deleteWorkflow, listWorkflows } from './workflows.js';
+import { addWorkflow, updateWorkflow, deleteWorkflow, listWorkflows } from './workflows.js';
 
 import { buildRefactorPrompt } from './prompts/prompt.refactor.js';
 import { getMetrics, onMetricsUpdate } from './metrics.js';
