@@ -66,7 +66,7 @@ export class AuggieIntegration {
     }
   }
 
-  
+
 
   /**
    * Executes a custom Auggie command with a specific prompt
@@ -84,6 +84,30 @@ export class AuggieIntegration {
       };
     }
   }
+
+  /**
+   * Executes a custom Auggie command with streaming stdout/stderr
+   * @param {string} prompt
+   * @param {Object} options
+   * @param {Object} handlers { onStdout?: (chunk: string) => void, onStderr?: (chunk: string) => void }
+   * @returns {Promise<{success: boolean, stdout: string, stderr: string, exitCode: number | null}>}
+   */
+  async executeCustomPromptStream(prompt, options = {}, handlers = {}) {
+    const args = [];
+    const mcpConfigRel = path.join('.qlood', 'mcp-config.json');
+    args.push('--mcp-config', mcpConfigRel, '--compact');
+
+    const usePrint = options.usePrintFormat !== false;
+    if (usePrint) {
+      args.push('--print', prompt);
+    } else {
+      if (options.flags) args.push(...options.flags);
+      args.push(prompt);
+    }
+
+    return this._spawnAndStream(this.auggieCommand, args, options, handlers);
+  }
+
 
   /**
    * Checks if the user is authenticated with Auggie
@@ -159,6 +183,22 @@ export class AuggieIntegration {
         stderr: `Error executing Auggie command: ${error.message}`
       };
     }
+  }
+
+  /**
+   * Streaming variant of executeRawCommand
+   * @param {string[]} args
+   * @param {Object} options
+   * @param {Object} handlers
+   */
+  async executeRawCommandStream(args = [], options = {}, handlers = {}) {
+    // Interactive commands should still inherit TTY and not be streamed into TUI
+    const interactiveCommands = ['--login', '--logout', '--compact'];
+    const isInteractive = args.some(arg => interactiveCommands.includes(arg));
+    if (isInteractive) {
+      return this._executeInteractiveCommand(args, options);
+    }
+    return this._spawnAndStream(this.auggieCommand, args, options, handlers);
   }
 
   /**
@@ -307,6 +347,67 @@ export class AuggieIntegration {
     }
   }
 
+
+  /**
+   * Spawn and stream a command, accumulating output while emitting chunks.
+   * Supports optional pseudo-TTY via 'script' to encourage line-buffered output.
+   * @private
+   */
+  async _spawnAndStream(command, args = [], options = {}, handlers = {}) {
+    const { cwd = process.cwd(), env = process.env, skipMetrics = false, pty = false } = options;
+
+    // Metrics + request log for Auggie commands
+    try { if (!skipMetrics && command === this.auggieCommand) incAuggieCalls(); } catch {}
+    if (command === this.auggieCommand) {
+      debugLogger.logAuggieRequest(command, args, { cwd, pty });
+    }
+
+    // Wrap with 'script' to allocate a PTY when requested (macOS compatible)
+    let cmd = command;
+    let cmdArgs = args;
+    if (pty) {
+      cmd = 'script';
+      cmdArgs = ['-q', '/dev/null', command, ...args];
+    }
+
+    return new Promise((resolve) => {
+      const child = spawn(cmd, cmdArgs, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      child.stdout.setEncoding && child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding && child.stderr.setEncoding('utf8');
+      let stdout = '';
+      let stderr = '';
+
+      child.stdout.on('data', (chunk) => {
+        const text = typeof chunk === 'string' ? chunk : chunk.toString();
+        stdout += text;
+        try { handlers.onStdout && handlers.onStdout(text); } catch {}
+      });
+
+      child.stderr.on('data', (chunk) => {
+        const text = typeof chunk === 'string' ? chunk : chunk.toString();
+        stderr += text;
+        try { handlers.onStderr && handlers.onStderr(text); } catch {}
+      });
+
+      child.on('close', (code) => {
+        const result = { success: code === 0, stdout: (stdout || '').trim(), stderr: (stderr || '').trim(), exitCode: code };
+        if (command === this.auggieCommand) {
+          const duration = 0; // duration not tracked here for simplicity
+          debugLogger.logAuggieResponse(command, result, duration);
+        }
+        resolve(result);
+      });
+
+      child.on('error', (error) => {
+        const result = { success: false, stdout: (stdout || '').trim(), stderr: ((stderr || `Error: ${error.message}`) || '').trim(), exitCode: null };
+        if (command === this.auggieCommand) {
+          debugLogger.logAuggieResponse(command, result, 0, error);
+        }
+        resolve(result);
+      });
+    });
+  }
+
   /**
    * Private method to escape shell arguments
    * @private
@@ -325,8 +426,10 @@ const defaultAuggie = new AuggieIntegration();
 export const ensureAuggieUpToDate = () => defaultAuggie.ensureAuggieUpToDate();
 
 export const executeCustomPrompt = (prompt, options) => defaultAuggie.executeCustomPrompt(prompt, options);
+export const executeCustomPromptStream = (prompt, options, handlers) => defaultAuggie.executeCustomPromptStream(prompt, options, handlers);
 export const checkAuthentication = () => defaultAuggie.checkAuthentication();
 export const executeRawCommand = (args, options) => defaultAuggie.executeRawCommand(args, options);
+export const executeRawCommandStream = (args, options, handlers) => defaultAuggie.executeRawCommandStream(args, options, handlers);
 
 // Export the class as default
 export default AuggieIntegration;

@@ -4,7 +4,7 @@ import path from 'path';
 import { setMainPrompt, setSystemInstructions } from './config.js';
 import { debugLogger } from './debug.js';
 import { ensureProjectInit, loadProjectConfig, getProjectDir, ensureProjectDirs, extractCleanMarkdown } from './project.js';
-import { checkAuthentication, executeCustomPrompt } from './auggie-integration.js';
+import { checkAuthentication, executeCustomPromptStream } from './auggie-integration.js';
 
 import { addWorkflow, updateWorkflow, deleteWorkflow, listWorkflows } from './workflows.js';
 
@@ -16,7 +16,7 @@ export async function runTui() {
 
   // Ensure we are attached to a real TTY; otherwise Blessed will fail with setRawMode EIO
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    console.error('Error: qlood TUI requires an interactive terminal (TTY).');
+    console.error('Error: QLOOD-CLI requires an interactive terminal (TTY).');
     console.error('Tip: Run in a real terminal, or use subcommands like "qlood test ..." or "qlood agent ..." in non-interactive environments.');
     process.exit(1);
   }
@@ -25,7 +25,7 @@ export async function runTui() {
 
   const screen = blessed.screen({
     smartCSR: true,
-    title: 'qlood TUI',
+    title: 'QLOOD-CLI',
     fullUnicode: true,
     dockBorders: true,
   });
@@ -42,28 +42,13 @@ export async function runTui() {
     error: 'red',
   };
 
-  // Layout: Header (3) | Log (flex) | Footer status (1) | Input (3)
-  const header = blessed.box({
+  // Layout: Log (flex) | Footer status (1) | Input (3)
+
+  const log = blessed.log({
     top: 0,
     left: 0,
     width: '100%',
-    height: 3,
-    tags: true,
-    border: { type: 'line' },
-    shadow: true,
-    style: {
-      fg: theme.fg,
-      bg: theme.bg,
-      border: { fg: theme.dim },
-    },
-    content: ''
-  });
-
-  const log = blessed.log({
-    top: 3,
-    left: 0,
-    width: '100%',
-    height: '100%-7',
+    height: '100%-4',
     border: { type: 'line' },
     scrollable: true,
     alwaysScroll: true,
@@ -75,7 +60,7 @@ export async function runTui() {
     keys: true,
     mouse: true,
     tags: true,
-    label: ' qlood ',
+    label: ' QLOOD-CLI ',
     shadow: true,
     padding: { left: 1, right: 1 },
     style: {
@@ -118,7 +103,7 @@ export async function runTui() {
     wrap: false,
   });
 
-  screen.append(header);
+
   screen.append(log);
   screen.append(statusBar);
   screen.append(input);
@@ -137,13 +122,13 @@ export async function runTui() {
   screen.append(backdrop);
 
   let spinnerTimer = null;
-  let headerAnimTimer = null;
+
   // Loading message animator for log
   let loadingInterval = null;
   const spinnerFrames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
   let spinnerIndex = 0;
   let working = false;
-  let headerHue = 0;
+
 
   // Simple output mode: no animations, minimal UI effects
   const SIMPLE_OUTPUT = true;
@@ -159,49 +144,112 @@ export async function runTui() {
   let paletteOverlay = null;
   let paletteList = null;
 
+  // Streaming status spinner (non-intrusive; shown in status bar)
+  let streamSpinnerActive = false;
+  let streamSpinnerTimer = null;
+  let streamSpinnerFrame = 0;
+
+  // Streaming heartbeat to reassure during long silences
+  let lastStreamChunkAt = 0;
+  let heartbeatTimer = null;
+
+  function startStream() {
+    setStreamSpinner(true);
+    lastStreamChunkAt = Date.now();
+    if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    heartbeatTimer = setInterval(() => {
+      const now = Date.now();
+      if (now - lastStreamChunkAt > 4000) {
+        addLog('{dim}… still working{/}');
+        lastStreamChunkAt = now;
+      }
+    }, 2000);
+  }
+
+  function stopStream() {
+    setStreamSpinner(false);
+    if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+  }
+  // Status bar spinner controller (top-level)
+  // Rendering scheduler to reduce flicker
+  let renderTimer = null;
+  function scheduleRender() {
+    if (renderTimer) return;
+    renderTimer = setTimeout(() => {
+      renderTimer = null;
+      try { screen.render(); } catch {}
+    }, 80);
+  }
+
+  // Throttled stream logging buffer
+  let streamBuffer = '';
+  let streamFlushTimer = null;
+  function streamLog(text) {
+    streamBuffer += String(text || '');
+    if (!streamFlushTimer) {
+      streamFlushTimer = setTimeout(() => flushStreamLog(), 120);
+    }
+  }
+  function flushStreamLog() {
+    if (streamFlushTimer) { clearTimeout(streamFlushTimer); streamFlushTimer = null; }
+    if (!streamBuffer) return;
+    addLog(streamBuffer.trimEnd());
+    streamBuffer = '';
+  }
+
+  function setStreamSpinner(active) {
+    if (active && !streamSpinnerActive) {
+      streamSpinnerActive = true;
+      const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+      streamSpinnerTimer = setInterval(() => {
+        streamSpinnerFrame = (streamSpinnerFrame + 1) % frames.length;
+        renderStatus();
+        screen.render();
+      }, 100);
+    } else if (!active && streamSpinnerActive) {
+      streamSpinnerActive = false;
+      if (streamSpinnerTimer) { clearInterval(streamSpinnerTimer); streamSpinnerTimer = null; }
+      renderStatus();
+      screen.render();
+    }
+  }
+
+  // Normalize streamed chunks to reduce choppy wrapping (top-level)
+  function normalizeChunk(chunk) {
+    const text = String(chunk || '').replace(/\r/g, '');
+    const lines = text.split('\n');
+    const out = [];
+    let acc = '';
+    for (const raw of lines) {
+      const l = raw;
+      const t = l.trim();
+      const isBoundary = t === '' || /^[🔧📋]/.test(t) || /^-{2,}$/.test(t);
+      if (isBoundary) {
+        if (acc) { out.push(acc); acc = ''; }
+        out.push(l);
+        continue;
+      }
+      if (t.length <= 3) {
+        acc += (acc ? ' ' : '') + t;
+      } else {
+        if (acc) { out.push(acc); acc = ''; }
+        out.push(l);
+      }
+    }
+    if (acc) out.push(acc);
+    return out.join('\n');
+  }
+
+
   // Loading overlay
   let loadingOverlay = null;
   let loadingSpinnerTimer = null;
 
-  function colorCycle(colors) {
-    return colors[(headerHue) % colors.length];
-  }
 
-  function gradientText(text) {
-    // Cycle across accent colors for a simple gradient illusion
-    const palette = [theme.accent, theme.accentAlt, 'blue'];
-    let out = '';
-    for (let i = 0; i < text.length; i++) {
-      const c = palette[(i + headerHue) % palette.length];
-      out += `{${c}-fg}${text[i]}{/}`;
-    }
-    return out;
-  }
 
-  function renderHeader() {
-    const state = working
-      ? `{${theme.accent}-fg}${spinnerFrames[spinnerIndex]} Working...{/}`
-      : `{${theme.dim}-fg}Idle{/}`;
-    const brand = `{bold}${gradientText(' qlood ')}{/}`;
-    // Show a different tip when no workflows exist yet
-    let hasWorkflows = false;
-    try {
-      const base = getProjectDir(process.cwd());
-      const d = path.join(base, 'workflows');
-      if (fs.existsSync(d)) {
-        const files = fs.readdirSync(d);
-        if (files.some(f => /^(\d+)[-_].+\.md$/.test(f))) { hasWorkflows = true; }
-      }
-    } catch {}
-    const tip = hasWorkflows
-      ? ` {${theme.dim}-fg}Use {/}{bold}/wf <id>{/}{${theme.dim}-fg}, {/}{bold}/wfls{/}{${theme.dim}-fg} or {/}{bold}/help{/}{${theme.dim}-fg}. Commands must start with {/}{bold}/{/}{${theme.dim}-fg}.{/}`
-      : ` {${theme.dim}-fg}Create your first workflow using {/}{bold}/wfadd <description>{/}{${theme.dim}-fg}. Commands must start with {/}{bold}/{/}{${theme.dim}-fg}.{/}`;
-    header.setContent(
-      `${brand} {${theme.dim}-fg}AI Test Runner{/}\n` +
-      ` ${state}\n` +
-      tip
-    );
-  }
+
+
+
 
   function addLog(message) {
     log.add(message);
@@ -256,7 +304,7 @@ export async function runTui() {
     working = true;
     if (SIMPLE_OUTPUT) {
       addLog('{dim}Working...{/}');
-      renderHeader();
+
       return;
     }
     // Animated mode (unused when SIMPLE_OUTPUT=true)
@@ -266,9 +314,9 @@ export async function runTui() {
       let dotCount = 0; let pulseState = false;
       spinnerTimer = setInterval(() => {
         spinnerIndex = (spinnerIndex + 1) % spinnerFrames.length;
-        renderHeader();
+
         if (workingLogLine) workingLogLine.setContent(`{${theme.accent}-fg}${spinnerFrames[spinnerIndex]}{/} {dim}Working...{/}`);
-        if (spinnerIndex % 4 === 0) { dotCount = dotCount >= 3 ? 0 : dotCount + 1; log.setLabel(` qlood - Working${'.'.repeat(dotCount)} `);}
+        if (spinnerIndex % 4 === 0) { dotCount = dotCount >= 3 ? 0 : dotCount + 1; log.setLabel(` QLOOD-CLI - Working${'.'.repeat(dotCount)} `);}
         if (spinnerIndex % 5 === 0) { pulseState = !pulseState; statusBar.style.fg = pulseState ? theme.accent : theme.dim; }
         screen.render();
       }, 120);
@@ -283,11 +331,11 @@ export async function runTui() {
       backdrop.hidden = true;
       if (workingLogLine) { workingLogLine.destroy(); workingLogLine = null; }
       statusBar.style.fg = theme.dim;
-      log.setLabel(' qlood ');
+      log.setLabel(' QLOOD-CLI ');
       screen.render();
     }
     working = false;
-    renderHeader();
+
   }
 
   // Helper function to check Auggie authentication
@@ -312,7 +360,7 @@ export async function runTui() {
     showToast('Login required', 'error');
   }
 
-  addLog('{bold}Welcome to qlood TUI{/}');
+  addLog('{bold}Welcome to QLOOD-CLI{/}');
   // Auggie handles authentication; run `auggie --login` if needed.
 
   // Check Auggie authentication
@@ -347,7 +395,7 @@ export async function runTui() {
     const projectCfg = loadProjectConfig(process.cwd());
     if (!projectCfg) {
       expectingInitConfirm = true;
-      addLog('{yellow-fg}This project is not initialized for qlood.{/}');
+      addLog('{yellow-fg}This project is not initialized for QLOOD-CLI.{/}');
       addLog('We can create ./.qlood and scan your project to set sensible defaults (URL, start command).');
       addLog('This will also allow the {cyan-fg}www.augmentcode.com{/} Auggie CLI tool to index your codebase for faster retrieval.');
       addLog('Initialize now? {bold}y{/}/n');
@@ -432,7 +480,33 @@ export async function runTui() {
     if (!expectingInitConfirm) return;
     input.clearValue();
     if (expectingInitConfirm) {
-      addLog('{red-fg}Initialization declined. Exiting qlood...{/}');
+  // Normalize streamed chunks to reduce choppy wrapping
+  function normalizeChunk(chunk) {
+    const text = String(chunk || '').replace(/\r/g, '');
+    const lines = text.split('\n');
+    const out = [];
+    let acc = '';
+    for (const raw of lines) {
+      const l = raw;
+      const t = l.trim();
+      const isBoundary = t === '' || /^[🔧📋]/.test(t) || /^-{2,}$/.test(t);
+      if (isBoundary) {
+        if (acc) { out.push(acc); acc = ''; }
+        out.push(l);
+        continue;
+      }
+      if (t.length <= 3) {
+        acc += (acc ? ' ' : '') + t;
+      } else {
+        if (acc) { out.push(acc); acc = ''; }
+        out.push(l);
+      }
+    }
+    if (acc) out.push(acc);
+    return out.join('\n');
+  }
+
+      addLog('{red-fg}Initialization declined. Exiting QLOOD-CLI...{/}');
       showToast('Initialization declined', 'warn');
       setTimeout(() => { teardownAndExit(0); }, 300);
       return;
@@ -446,9 +520,10 @@ export async function runTui() {
     const now = new Date();
     const clock = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const { llmCalls, auggieCalls } = getMetrics();
-    statusBar.setContent(`{${theme.dim}-fg}Stats:{/} LLM ${llmCalls}  •  Auggie ${auggieCalls}  {${theme.dim}-fg}| ${clock}{/}`);
+    const spin = streamSpinnerActive ? `{${theme.accent}-fg}${spinnerFrames[streamSpinnerFrame]} Running{/}` : `{${theme.dim}-fg}Idle{/}`;
+    statusBar.setContent(`{${theme.dim}-fg}Stats:{/} LLM ${llmCalls}  •  Auggie ${auggieCalls}  {${theme.dim}-fg}| ${clock}{/}  ${spin}`);
   }
-  renderHeader();
+
   renderStatus();
 
   // Live status updates: refresh clock every second, and react to metrics updates
@@ -464,23 +539,14 @@ export async function runTui() {
   function teardownAndExit(code = 0) {
     try { if (statusTick) clearInterval(statusTick); } catch {}
     try { if (unsubscribeMetrics) unsubscribeMetrics(); } catch {}
-    try { if (headerAnimTimer) clearInterval(headerAnimTimer); } catch {}
+
     try { if (spinnerTimer) clearInterval(spinnerTimer); } catch {}
     try { if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer); } catch {}
     screen.destroy();
     process.exit(code);
   }
 
-  // Header idle animation (gentle)
-  function startHeaderAnim() {
-    if (headerAnimTimer) return;
-    headerAnimTimer = setInterval(() => {
-      headerHue = (headerHue + 1) % 999;
-      renderHeader();
-      screen.render();
-    }, 700);
-  }
-  if (!SIMPLE_OUTPUT) startHeaderAnim();
+
 
   // Command history (simple)
   const history = [];
@@ -496,6 +562,26 @@ export async function runTui() {
     histIndex = history.length;
 
     // Log user input for debug
+  function setStreamSpinner(active) {
+    if (active && !streamSpinnerActive) {
+      streamSpinnerActive = true;
+      const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+      streamSpinnerTimer = setInterval(() => {
+        streamSpinnerFrame = (streamSpinnerFrame + 1) % frames.length;
+        // Re-render status bar to show spinner
+        renderStatus();
+        screen.render();
+      }, 100);
+    } else if (!active && streamSpinnerActive) {
+      streamSpinnerActive = false;
+      if (streamSpinnerTimer) { clearInterval(streamSpinnerTimer); streamSpinnerTimer = null; }
+      renderStatus();
+      screen.render();
+    }
+  }
+
+    // Log user input for debug
+
     debugLogger.logUserInput(cmd, 'TUI');
 
     try {
@@ -520,7 +606,7 @@ export async function runTui() {
           expectingInitConfirm = false;
           return;
         } else if (ans === 'n' || ans === 'no') {
-          addLog('{red-fg}Initialization declined. Exiting qlood...{/}');
+          addLog('{red-fg}Initialization declined. Exiting QLOOD-CLI...{/}');
           showToast('Initialization declined', 'warn');
           setTimeout(() => { teardownAndExit(0); }, 300);
           return;
@@ -572,10 +658,27 @@ export async function runTui() {
           showToast('Login required', 'error');
           return;
         }
-        startLoadingAnimation('Creating workflow with Auggie... This may take several minutes.');
+        addLog('{cyan-fg}Starting: Creating workflow with Auggie...{/}');
+        startStream();
         try {
-          const { id, file } = await addWorkflow(desc);
-          stopLoadingAnimation('Workflow created', true);
+          const streamHandlers = {
+            onStdout: (chunk) => {
+              lastStreamChunkAt = Date.now();
+              const text = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, '');
+              if (text.trim().length === 0) return;
+              streamLog(text + "\n");
+              scheduleRender();
+            },
+            onStderr: (chunk) => {
+              lastStreamChunkAt = Date.now();
+              const text = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, '');
+              if (text.trim().length === 0) return;
+              streamLog(`{yellow-fg}${text}{/}\n`);
+              scheduleRender();
+            }
+          };
+          const { id, file } = await addWorkflow(desc, { streamHandlers });
+          stopStream();
           addLog(`{green-fg}Workflow created{/}: ${file} (id: ${id})`);
         } catch (e) {
           stopLoadingAnimation(`wfadd error: ${e?.message || e}`, false);
@@ -600,10 +703,27 @@ export async function runTui() {
           showToast('Login required', 'error');
           return;
         }
-        startLoadingAnimation('Updating workflow with Auggie...');
+        addLog('{cyan-fg}Starting: Updating workflow with Auggie...{/}');
+        startStream();
         try {
-          const res = await updateWorkflow(id);
-          stopLoadingAnimation(res.updated ? 'Workflow updated' : 'No changes applied', res.updated);
+          const streamHandlers = {
+            onStdout: (chunk) => {
+              lastStreamChunkAt = Date.now();
+              const text = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, '');
+              if (text.trim().length === 0) return;
+              streamLog(text + "\n");
+              scheduleRender();
+            },
+            onStderr: (chunk) => {
+              lastStreamChunkAt = Date.now();
+              const text = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, '');
+              if (text.trim().length === 0) return;
+              streamLog(`{yellow-fg}${text}{/}\n`);
+              scheduleRender();
+            }
+          };
+          const res = await updateWorkflow(id, { streamHandlers });
+          stopStream();
           addLog(res.updated ? `{green-fg}Workflow updated{/}: ${res.file}` : `{yellow-fg}No changes applied{/}: ${res.file}`);
         } catch (e) {
           stopLoadingAnimation(`wdupdate error: ${e?.message || e}`, false);
@@ -668,7 +788,7 @@ export async function runTui() {
         addLog('  {cyan-fg}/wfdel <id>{/} - Delete a workflow');
         addLog('  {cyan-fg}/refactor{/} - Analyze repo and save a refactor plan under ./.qlood/results');
         addLog('  {cyan-fg}/clean{/} - Delete all files under ./.qlood/debug and ./.qlood/results');
-        addLog('  {cyan-fg}/quit{/} - Exit qlood');
+        addLog('  {cyan-fg}/quit{/} - Exit QLOOD-CLI');
         addLog('');
         addLog('All input must start with {bold}/{/}.');
 
@@ -685,7 +805,7 @@ export async function runTui() {
         addLog('1. Open a new terminal window');
         addLog('2. Run: {bold}auggie --login{/}');
         addLog('3. Follow the authentication prompts');
-        addLog('4. Once authenticated, restart qlood to use AI features');
+        addLog('4. Once authenticated, restart QLOOD-CLI to use AI features');
         addLog('');
         addLog('If Auggie is not installed, run: {bold}qlood auggie-check{/}');
         addLog('');
@@ -701,26 +821,42 @@ export async function runTui() {
           showToast('Login required', 'error');
           return;
         }
-        startLoadingAnimation('Scanning repository for refactoring opportunities...');
+        addLog('{cyan-fg}Starting: Scanning repository for refactoring opportunities...{/}');
+        setStreamSpinner(true);
         const cwd = process.cwd();
         try {
           ensureProjectDirs(cwd);
           const prompt = buildRefactorPrompt();
-          const result = await executeCustomPrompt(prompt, { cwd, usePrintFormat: true });
-          let content = result.success ? extractCleanMarkdown(result.stdout) : '';
+          let liveBuf = '';
+          const result = await executeCustomPromptStream(prompt, { cwd, usePrintFormat: true }, {
+            onStdout: (chunk) => {
+              liveBuf += chunk;
+              const text = String(chunk).replace(/\r/g, '');
+              if (text.trim().length === 0) return;
+              streamLog(text + "\n");
+              scheduleRender();
+            },
+            onStderr: (chunk) => {
+              const text = String(chunk).replace(/\r/g, '');
+              if (text.trim().length === 0) return;
+              streamLog(`{yellow-fg}${text}{/}\n`);
+              scheduleRender();
+            }
+          });
+          let content = result.success ? extractCleanMarkdown(result.stdout || liveBuf) : '';
           if (!content || content.trim().length < 50) {
-            content = result.stdout || content || '# Refactor Plan\n\nNo results.';
+            content = (result.stdout || liveBuf || '# Refactor Plan\n\nNo results.');
           }
           const ts = new Date().toISOString().replace(/[:.]/g, '-');
           const baseDir = path.join(getProjectDir(cwd), 'results', `refactor-${ts}`);
           fs.mkdirSync(baseDir, { recursive: true });
           const outPath = path.join(baseDir, 'refactor.md');
           fs.writeFileSync(outPath, content, 'utf-8');
-          stopLoadingAnimation('Refactor plan generated', true);
+          setStreamSpinner(false);
           addLog(`Saved refactor plan: ${path.relative(cwd, outPath)}`);
           showToast('Refactor plan saved', 'success');
         } catch (e) {
-          stopLoadingAnimation(`Refactor analysis failed: ${e?.message || e}`, false);
+          setStreamSpinner(false);
           addLog(`{red-fg}refactor error:{/} ${e?.message || e}`);
           showToast('Refactor failed', 'error');
         }
@@ -789,7 +925,7 @@ export async function runTui() {
   // Ctrl+C behavior: exits the TUI.
   let lastCtrlC = 0;
   screen.key(['C-c'], async () => {
-    if (headerAnimTimer) clearInterval(headerAnimTimer);
+
     if (spinnerTimer) clearInterval(spinnerTimer);
     if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
     teardownAndExit(0);
@@ -798,7 +934,7 @@ export async function runTui() {
   // Also catch SIGINT directly (mac terminals may deliver SIGINT instead of key binding)
   process.on('SIGINT', async () => {
     hideWorking();
-    if (headerAnimTimer) clearInterval(headerAnimTimer);
+
     if (spinnerTimer) clearInterval(spinnerTimer);
     if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
     teardownAndExit(0);
@@ -806,7 +942,7 @@ export async function runTui() {
 
   // 'q' to quit directly
   screen.key(['q'], () => {
-    if (headerAnimTimer) clearInterval(headerAnimTimer);
+
     if (spinnerTimer) clearInterval(spinnerTimer);
     if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
     teardownAndExit(0);

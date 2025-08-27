@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { ensureProjectDirs, getProjectDir } from './project.js';
-import { executeCustomPrompt, checkAuthentication } from './auggie-integration.js';
+import { executeCustomPrompt, executeCustomPromptStream, checkAuthentication } from './auggie-integration.js';
 import { debugLogger } from './debug.js';
 
 import { buildWorkflowPrompt } from './prompts/prompt.workflow.js';
@@ -99,7 +99,7 @@ function nextWorkflowId(cwd = process.cwd()) {
   return max + 1;
 }
 
-export async function addWorkflow(description, { cwd = process.cwd() } = {}) {
+export async function addWorkflow(description, { cwd = process.cwd(), streamHandlers = null } = {}) {
   if (!description || !description.trim()) throw new Error('Description required');
   // Require Auggie auth
   const auth = await checkAuthentication();
@@ -119,7 +119,11 @@ export async function addWorkflow(description, { cwd = process.cwd() } = {}) {
   const writeInstruction = `\n\nACTION:\n- Write the full Markdown workflow to \"${relOutPath}\" (overwrite if it exists)\n- Use UTF-8 encoding\n- Do not ask for confirmation`;
   const prompt = `${basePrompt}${writeInstruction}`;
 
-  const res = await executeCustomPrompt(prompt, { usePrintFormat: true });
+  if (streamHandlers) {
+    await executeCustomPromptStream(prompt, { usePrintFormat: false, pty: true }, streamHandlers);
+  } else {
+    await executeCustomPrompt(prompt, { usePrintFormat: true });
+  }
 
   // Verify file was created by Auggie; minimal fallback if not
   if (!fs.existsSync(outPath)) {
@@ -129,7 +133,7 @@ export async function addWorkflow(description, { cwd = process.cwd() } = {}) {
   return { id, file, path: outPath };
 }
 
-export async function updateWorkflow(id, { cwd = process.cwd() } = {}) {
+export async function updateWorkflow(id, { cwd = process.cwd(), streamHandlers = null } = {}) {
   const wf = listWorkflows(cwd).find(w => w.id === Number(id));
   if (!wf) throw new Error(`Workflow ${id} not found`);
   const p = path.join(wf.dir, wf.file);
@@ -170,14 +174,27 @@ ${prev}`;
   const writeInstruction = `\n\nACTION:\n- Write the updated Markdown workflow to \"${relPath}\" (overwrite)\n- Use UTF-8 encoding\n- Do not ask for confirmation`;
   const finalPrompt = `${prompt}${writeInstruction}`;
 
-
-  const res = await executeCustomPrompt(finalPrompt, { usePrintFormat: true });
-  const next = extractCleanMarkdown((res.success ? res.stdout : '').trim());
-  if (next && next.length > 20) {
-    fs.writeFileSync(p, next);
-    return { file: wf.file, updated: true };
+  let stdout = '';
+  if (streamHandlers) {
+    const res = await executeCustomPromptStream(finalPrompt, { usePrintFormat: false, pty: true }, {
+      onStdout: (chunk) => { stdout += chunk; try { streamHandlers.onStdout?.(chunk); } catch {} },
+      onStderr: (chunk) => { try { streamHandlers.onStderr?.(chunk); } catch {} }
+    });
+    const next = extractCleanMarkdown((res.success ? (res.stdout || stdout) : '').trim());
+    if (next && next.length > 20) {
+      fs.writeFileSync(p, next);
+      return { file: wf.file, updated: true };
+    }
+    return { file: wf.file, updated: false };
+  } else {
+    const res = await executeCustomPrompt(finalPrompt, { usePrintFormat: true });
+    const next = extractCleanMarkdown((res.success ? res.stdout : '').trim());
+    if (next && next.length > 20) {
+      fs.writeFileSync(p, next);
+      return { file: wf.file, updated: true };
+    }
+    return { file: wf.file, updated: false };
   }
-  return { file: wf.file, updated: false };
 }
 
 export function deleteWorkflow(id, { cwd = process.cwd() } = {}) {
