@@ -245,31 +245,7 @@ export class DebugLogger {
     });
   }
 
-  logPageState(page) {
-    if (!page) {
-      this.writeDebug('PAGE_STATE', { status: 'No page available' });
-      return;
-    }
-
-    // Safely get page info
-    Promise.resolve().then(async () => {
-      try {
-        const url = page.url();
-        const title = await page.title().catch(() => 'Unknown');
-        
-        this.writeDebug('PAGE_STATE', {
-          url,
-          title,
-          timestamp: new Date().toISOString()
-        });
-      } catch (error) {
-        this.writeDebug('PAGE_STATE', {
-          error: error.message,
-          status: 'Failed to get page info'
-        });
-      }
-    }).catch(() => {}); // Silent catch for async operation
-  }
+  // Removed logPageState: depended on local Playwright page instance
 
   logError(context, error) {
     this.writeDebug('ERROR', {

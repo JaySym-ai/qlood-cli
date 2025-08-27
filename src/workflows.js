@@ -4,7 +4,6 @@ import { ensureProjectDirs, getProjectDir } from './project.js';
 import { executeCustomPrompt, checkAuthentication } from './auggie-integration.js';
 import { debugLogger } from './debug.js';
 
-import { runProjectTest } from './test.js';
 import { buildWorkflowPrompt } from './prompts/prompt.workflow.js';
 // Safeguards to prevent E2BIG when building /wdupdate prompt
 const MAX_WFUP_CONTEXT = Number(process.env.QLOOD_MAX_WFUP_CONTEXT || process.env.QLOOD_MAX_WF_CONTEXT || 8000);
@@ -228,60 +227,4 @@ function readContains(p, substr) {
 }
 
 
-export async function runWorkflow(id, { headless, debug, onLog } = {}) {
-  const cwd = process.cwd();
-  const wf = listWorkflows(cwd).find(w => w.id === Number(id));
-  if (!wf) throw new Error(`Workflow ${id} not found`);
-  const p = path.join(wf.dir, wf.file);
-  const scenario = fs.readFileSync(p, 'utf-8');
-
-  const { dir, success, warning, error } = createResultStructure(id, cwd);
-
-  // Delegate to project test runner; use our pre-created directory structure
-  await runProjectTest(scenario, { headless, debug, onLog, artifactsDir: dir });
-
-  // Use the controlled directory structure
-  const runDir = dir;
-  const latest = path.basename(dir);
-
-  // Use audits.json to categorize result when available
-  let category = 'success';
-  if (runDir) {
-    const auditsPath = path.join(runDir, 'audits.json');
-    try {
-      if (fs.existsSync(auditsPath)) {
-        const audits = JSON.parse(fs.readFileSync(auditsPath, 'utf8'));
-        category = audits.overall || 'success';
-      }
-    } catch {}
-  }
-
-  const targetFolder = category === 'success' ? success : category === 'warning' ? warning : error;
-
-  // Copy artifacts into the categorized folder
-  if (runDir) {
-    // Copy logs
-    copyIfExists(path.join(runDir, 'agent.log'), path.join(targetFolder, 'agent.log'));
-    copyIfExists(path.join(runDir, 'browser.log'), path.join(targetFolder, 'browser.log'));
-    copyIfExists(path.join(runDir, 'network.log'), path.join(targetFolder, 'network.log'));
-
-    // Screenshots are now saved directly in each run directory, no need to copy from separate location
-  }
-
-
-  const report = `# Workflow ${id} Result\n\n- Workflow file: ${wf.file}\n- Run: ${latest || 'n/a'}\n- Category: ${category}\n- Artifacts: ./.qlood/results/${latest || ''}\n`;
-  fs.writeFileSync(path.join(targetFolder, 'report.md'), report);
-
-  return { resultDir: dir, category, runDir };
-}
-
-export async function runAllWorkflows({ headless, debug, onLog } = {}) {
-  const items = listWorkflows(process.cwd());
-  const results = [];
-  for (const it of items) {
-    if (onLog) onLog(`Running workflow ${it.id} - ${it.name}`);
-    const r = await runWorkflow(it.id, { headless, debug, onLog });
-    results.push({ id: it.id, dir: r.resultDir });
-  }
-  return results;
-}
+// Removed runWorkflow and runAllWorkflows: local Playwright runner deprecated.

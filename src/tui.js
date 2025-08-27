@@ -1,9 +1,7 @@
 import blessed from 'blessed';
 import fs from 'fs';
 import path from 'path';
-import { setMainPrompt, setSystemInstructions, setHeadlessMode, getHeadlessMode } from './config.js';
-import { openCmd, gotoCmd, clickCmd, typeCmd } from './commands.js';
-import { withPage, createChrome, cancelCurrentAction } from './chrome.js';
+import { setMainPrompt, setSystemInstructions } from './config.js';
 import { debugLogger } from './debug.js';
 import { ensureProjectInit, loadProjectConfig, getProjectStructurePath, saveProjectStructure, scanProject, getProjectDir, ensureProjectDirs, extractCleanMarkdown } from './project.js';
 import { checkAuthentication, executeCustomPrompt } from './auggie-integration.js';
@@ -23,7 +21,7 @@ export async function runTui() {
     process.exit(1);
   }
 
-  // Do NOT auto-launch Chrome here; lazily start on first browser command.
+  // Local browser control removed; Auggie (MCP) handles automation.
 
   const screen = blessed.screen({
     smartCSR: true,
@@ -334,12 +332,12 @@ export async function runTui() {
       const wfDir = path.join(getProjectDir(process.cwd()), 'workflows');
       const hasWfs = fs.existsSync(wfDir) && fs.readdirSync(wfDir).some(f => /^(\d+)[-_].+\.md$/.test(f));
       if (hasWfs) {
-        addLog('Tip: /wf <id> runs a workflow. Use {bold}/wfls{/} to list workflows.');
+        addLog('Tip: Use {bold}/wfls{/} to list workflows.');
       } else {
         addLog('Tip: Create your first workflow using {bold}/wfadd <description>{/}.');
       }
     } catch {
-      addLog('Tip: /wf <id> runs a workflow. Use {bold}/wfls{/} to list workflows.');
+      addLog('Tip: Use {bold}/wfls{/} to list workflows.');
     }
   }
 
@@ -429,9 +427,7 @@ export async function runTui() {
       }
 
       const items = listWorkflows();
-      if (items.length) {
-        addLog('You can now run a workflow with {bold}/wf <id>{/}.');
-      } else {
+      if (!items.length) {
         addLog('{yellow-fg}No workflows found yet.{/}');
         addLog('Create one with: {bold}/wfadd <short description>{/}');
         addLog('Example: {cyan-fg}/wfadd User signup and login{/}');
@@ -474,9 +470,8 @@ export async function runTui() {
   function renderStatus() {
     const now = new Date();
     const clock = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const { llmCalls, auggieCalls, toolCalls, lastTool } = getMetrics();
-    const lastToolText = lastTool ? ` (last: ${lastTool})` : '';
-    statusBar.setContent(`{${theme.dim}-fg}Stats:{/} LLM ${llmCalls}  •  Auggie ${auggieCalls}  •  Tools ${toolCalls}${lastToolText}  {${theme.dim}-fg}| ${clock}{/}`);
+    const { llmCalls, auggieCalls } = getMetrics();
+    statusBar.setContent(`{${theme.dim}-fg}Stats:{/} LLM ${llmCalls}  •  Auggie ${auggieCalls}  {${theme.dim}-fg}| ${clock}{/}`);
   }
   renderHeader();
   renderStatus();
@@ -516,10 +511,8 @@ export async function runTui() {
   const history = [];
   let histIndex = -1;
 
-  async function ensureChromeReady() {
-    // Launch if needed using current headless configuration
-    await createChrome({ devtools: false, maximize: true });
-  }
+  // Local browser lifecycle removed; ensureChromeReady is a no-op
+  async function ensureChromeReady() { return; }
 
   async function handle(line) {
     const cmd = (line || '').trim();
@@ -543,9 +536,7 @@ export async function runTui() {
             addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
           }
           const items = listWorkflows();
-          if (items.length) {
-            addLog('You can now run a workflow with {bold}/wf <id>{/}.');
-          } else {
+          if (!items.length) {
             addLog('{yellow-fg}No workflows found yet.{/}');
             addLog('Create one with: {bold}/wfadd <short description>{/}');
             addLog('Example: {cyan-fg}/wfadd User signup and login{/}');
@@ -596,36 +587,18 @@ export async function runTui() {
         setSystemInstructions(i);
         addLog('System instructions updated');
         showToast('System instructions updated', 'success');
-      } else if (cmd === '/headless') {
-        const currentMode = getHeadlessMode();
-        const newMode = !currentMode;
-        setHeadlessMode(newMode);
-        const status = newMode ? '{green-fg}Active{/}' : '{yellow-fg}Deactivated{/}';
-        addLog(`Headless mode: ${status}`);
-        showToast(`Headless ${newMode ? 'enabled' : 'disabled'}`, newMode ? 'success' : 'warn');
-        addLog('Browser will restart with new settings on next command.');
-        // Close current browser so next command will use new headless setting
-        await cancelCurrentAction();
       } else if (cmd.startsWith('/open ')) {
         const url = cmd.replace('/open ', '').trim();
         if (!url) return addLog('Usage: /open <url>');
-        await openCmd(url, { silent: true });
-        addLog(`Opened ${url}`);
-        showToast('Opened browser', 'info');
+        addLog('{yellow-fg}/open is no longer available. Use Auggie via `qlood agent` for browser actions.{/}');
       } else if (cmd.startsWith('/goto ')) {
         const url = cmd.replace('/goto ', '').trim();
         if (!url) return addLog('Usage: /goto <url>');
-        await ensureChromeReady();
-        await withPage((page) => gotoCmd(page, url, { silent: true }));
-        addLog(`Goto ${url}`);
-        showToast('Navigated', 'info');
+        addLog('{yellow-fg}Low-level browser commands are removed. Use Auggie via `qlood agent`.{/}');
       } else if (cmd.startsWith('/click ')) {
         const sel = cmd.replace('/click ', '').trim();
         if (!sel) return addLog('Usage: /click <selector>');
-        await ensureChromeReady();
-        await withPage((page) => clickCmd(page, sel, { silent: true }));
-        addLog(`Clicked ${sel}`);
-        showToast('Clicked', 'info');
+        addLog('{yellow-fg}Low-level browser commands are removed. Use Auggie via `qlood agent`.{/}');
       } else if (cmd.startsWith('/type ')) {
         const rest = cmd.replace('/type ', '');
         const space = rest.indexOf(' ');
@@ -633,10 +606,7 @@ export async function runTui() {
         const sel = rest.slice(0, space).trim();
         const text = rest.slice(space + 1);
         if (!sel) return addLog('Usage: /type <selector> <text>');
-        await ensureChromeReady();
-        await withPage((page) => typeCmd(page, sel, text, { silent: true }));
-        addLog(`Typed into ${sel}`);
-        showToast('Typed', 'info');
+        addLog('{yellow-fg}Low-level browser commands are removed. Use Auggie via `qlood agent`.{/}');
       } else if (cmd.startsWith('/wfadd ')) {
         const desc = cmd.replace('/wfadd ', '').trim();
         if (!desc) return addLog('Usage: /wfadd <description>');
@@ -694,26 +664,10 @@ export async function runTui() {
           addLog('{yellow-fg}No workflows found in ./.qlood/workflows.{/}');
           addLog('Create one with: {bold}/wfadd <short description>{/}');
           addLog('Example: {cyan-fg}/wfadd User signup and login{/}');
-          addLog('Then run it with: {cyan-fg}/wf 1{/}');
+          addLog('{yellow-fg}Run functionality removed. Use `qlood agent` for goals.{/}');
           return;
         }
-        if (items.length === 1) {
-          const only = items[0];
-          addLog(`Only one workflow found. Auto-running {bold}/wf ${only.id}{/}.`);
-          showWorking();
-          try {
-            await runWorkflow(only.id, { headless: getHeadlessMode(), debug: false, onLog: (m) => addLog(m) });
-            addLog('{green-fg}Workflow test completed{/}');
-          } catch (e) {
-            addLog(`{red-fg}wf error:{/} ${e?.message || e}`);
-          } finally {
-            hideWorking();
-          }
-        } else {
-          addLog('Multiple workflows found.');
-          addLog('Usage: /wf <id>');
-          addLog('Tip: list available workflows with {bold}/wfls{/}');
-        }
+        addLog('Multiple workflows found. Use {bold}/wfls{/} to list.');
 
       } else if (cmd.startsWith('/wf ')) {
         const idText = cmd.replace('/wf ', '').trim();
@@ -723,33 +677,10 @@ export async function runTui() {
           addLog('{yellow-fg}No workflows found in ./.qlood/workflows.{/}');
           addLog('Create one with: {bold}/wfadd <short description>{/}');
           addLog('Example: {cyan-fg}/wfadd User signup and login{/}');
-          addLog('Then run it with: {cyan-fg}/wf 1{/}');
+          addLog('{yellow-fg}Run functionality removed. Use `qlood agent` for goals.{/}');
           return;
         }
-        if (!id) {
-          addLog('Usage: /wf <id>');
-          addLog('Tip: list available workflows with {bold}/wfls{/}');
-          return;
-        }
-        showWorking();
-        try {
-          await runWorkflow(id, { headless: getHeadlessMode(), debug: false, onLog: (m) => addLog(m) });
-          addLog('{green-fg}Workflow test completed{/}');
-        } catch (e) {
-          addLog(`{red-fg}wf error:{/} ${e?.message || e}`);
-        } finally {
-          hideWorking();
-        }
-      } else if (cmd === '/wfall') {
-        showWorking();
-        try {
-          const res = await runAllWorkflows({ headless: getHeadlessMode(), debug: false, onLog: (m) => addLog(m) });
-          addLog(`{green-fg}Completed ${res.length} workflow(s){/}`);
-        } catch (e) {
-          addLog(`{red-fg}wfall error:{/} ${e?.message || e}`);
-        } finally {
-          hideWorking();
-        }
+        addLog('{yellow-fg}Running workflows from TUI is no longer supported.{/}');
       } else if (cmd === '/clean') {
         try {
           const base = getProjectDir(process.cwd());
@@ -776,18 +707,15 @@ export async function runTui() {
         }
       } else if (cmd === '/help') {
         addLog('{bold}Commands:{/}');
-        addLog('  {cyan-fg}/headless{/} - Toggle headless browser mode');
         addLog('  {cyan-fg}/wfadd <description>{/} - Create a new test workflow');
         addLog('  {cyan-fg}/wfls{/} - List all available workflows');
-        addLog('  {cyan-fg}/wf <id>{/} - Run a specific workflow by ID');
-        addLog('  {cyan-fg}/wfall{/} - Run all workflows sequentially');
         addLog('  {cyan-fg}/wdupdate <id>{/} - Update workflow to match code changes');
         addLog('  {cyan-fg}/wfdel <id>{/} - Delete a workflow');
         addLog('  {cyan-fg}/refactor{/} - Analyze repo and save a refactor plan under ./.qlood/results');
         addLog('  {cyan-fg}/clean{/} - Delete all files under ./.qlood/debug and ./.qlood/results');
         addLog('  {cyan-fg}/quit{/} - Exit qlood');
         addLog('');
-        addLog('All input must start with {bold}/{/} (e.g., {cyan-fg}/wf 1{/}).');
+        addLog('All input must start with {bold}/{/}.');
 
 
         // Credentials management help
@@ -797,19 +725,6 @@ export async function runTui() {
         addLog('    {cyan-fg}QLOOD_TEST_USERNAME{/}, {cyan-fg}QLOOD_TEST_PASSWORD{/}');
         addLog('  - Avoid passing secrets on the command line; typed text is masked in logs.');
 
-      } else if (cmd === '/tools') {
-        addLog('Available tools:');
-        addLog('  {blue-fg}goto{/}(url): Navigate to URL');
-        addLog('  {blue-fg}click{/}(selector): Click element');
-        addLog('  {blue-fg}type{/}(selector, text): Type text');
-        addLog('  {blue-fg}search{/}(selector, query): Type and submit search');
-        addLog('  {blue-fg}pressEnter{/}(): Press Enter key');
-        addLog('  {blue-fg}screenshot{/}(path?): Save screenshot (default screenshot.png)');
-        addLog('  {blue-fg}scroll{/}(y): Scroll by y pixels (positive=down)');
-        addLog('  {blue-fg}cli{/}(command, args?, options?): Execute CLI commands');
-        addLog('  {blue-fg}cliHelp{/}(command): Get help for CLI commands');
-        addLog('  {blue-fg}cliList{/}(): List running background processes');
-        addLog('  {blue-fg}cliKill{/}(processId): Kill background process');
       } else if (cmd === '/auggie-login' || cmd === '/login') {
         addLog('{cyan-fg}To authenticate with Auggie:{/}');
         addLog('1. Open a new terminal window');
@@ -916,44 +831,22 @@ export async function runTui() {
     screen.render();
   });
 
-  // Ctrl+C behavior: first cancels agent + browser action, second within 1.5s exits the TUI.
+  // Ctrl+C behavior: exits the TUI.
   let lastCtrlC = 0;
   screen.key(['C-c'], async () => {
-    const now = Date.now();
-    if (now - lastCtrlC < 1500) {
-      if (headerAnimTimer) clearInterval(headerAnimTimer);
-      if (spinnerTimer) clearInterval(spinnerTimer);
-      if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
-      teardownAndExit(0);
-    }
-    lastCtrlC = now;
-    addLog('{yellow-fg}Cancel requested{/}. Press Ctrl+C again to exit.');
-    try {
-      await cancelCurrentAction();
-      addLog('{green-fg}Current action cancelled.{/}');
-    } catch (e) {
-      addLog(`Cancel error: ${e?.message || e}`);
-    }
+    if (headerAnimTimer) clearInterval(headerAnimTimer);
+    if (spinnerTimer) clearInterval(spinnerTimer);
+    if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
+    teardownAndExit(0);
   });
 
   // Also catch SIGINT directly (mac terminals may deliver SIGINT instead of key binding)
   process.on('SIGINT', async () => {
-    try {
-      await cancelCurrentAction();
-      hideWorking();
-    } finally {
-      // Do not exit on first SIGINT; require second as above
-      const now = Date.now();
-      if (now - lastCtrlC < 1500) {
-        if (headerAnimTimer) clearInterval(headerAnimTimer);
-        if (spinnerTimer) clearInterval(spinnerTimer);
-        if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
-        teardownAndExit(0);
-      } else {
-        lastCtrlC = now;
-        addLog('{yellow-fg}Cancel requested via SIGINT{/}. Press Ctrl+C again to exit.');
-      }
-    }
+    hideWorking();
+    if (headerAnimTimer) clearInterval(headerAnimTimer);
+    if (spinnerTimer) clearInterval(spinnerTimer);
+    if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
+    teardownAndExit(0);
   });
 
   // 'q' to quit directly

@@ -21,9 +21,7 @@
     "testing",
     "web",
     "automation",
-    "chromium",
-    "playwright",
-    "cdp",
+    "mcp",
     "openrouter",
     "llm",
     "qa"

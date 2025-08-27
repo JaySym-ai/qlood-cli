@@ -12,11 +12,8 @@ const currentVersion = packageJson.version;
 
 import { Command } from 'commander';
 import dotenv from 'dotenv';
-import { createChrome, withPage, screenshot, cancelCurrentAction } from '../src/chrome.js';
-import { clickCmd, typeCmd, gotoCmd, openCmd } from '../src/commands.js';
 import { runTui } from '../src/tui.js';
 import { setMainPrompt, setSystemInstructions } from '../src/config.js';
-import { runProjectTest } from '../src/test.js';
 import { debugLogger } from '../src/debug.js';
 import { ensureAuggieUpToDate, executeRawCommand } from '../src/auggie-integration.js';
 import { getProjectDir, ensureProjectInit } from '../src/project.js';
@@ -32,21 +29,10 @@ dotenv.config();
 
 const program = new Command();
 
-// SIGINT handling: first Ctrl+C cancels current action (closes browser),
-// second within 1.5s exits the process.
-let lastSigint = 0;
-process.on('SIGINT', async () => {
-  const now = Date.now();
-  if (now - lastSigint < 1500) {
-    console.log('Exiting.');
-    process.exit(130);
-  }
-  lastSigint = now;
-  console.log('Cancel requested. Press Ctrl+C again to exit.');
-  try {
-    await cancelCurrentAction();
-    console.log('Current action cancelled.');
-  } catch {}
+// SIGINT: exit immediately
+process.on('SIGINT', () => {
+  console.log('Exiting.');
+  process.exit(130);
 });
 
 // Load defaults from config if present
@@ -61,59 +47,7 @@ program
   .description('AI-powered testing CLI for your web app. Initializes ./.qlood and drives Chromium to find bugs.')
   .version(currentVersion);
 
-program.option('--headless', 'Run headless Chromium', false);
-program.option('--debug', 'Run with visible browser and devtools', false);
-
-
-program
-  .command('open')
-  .argument('<url>')
-  .description('Open a new Chromium window and navigate to URL')
-  .action(async (url, _opts, cmd) => {
-    const opts = program.opts();
-    await openCmd(url, opts);
-  });
-
-program
-  .command('goto')
-  .argument('<url>')
-  .description('Navigate current tab to URL')
-  .action(async (url) => {
-    const opts = program.opts();
-    await createChrome({ headless: !!opts.headless, debug: !!opts.debug });
-    await withPage(async (page) => gotoCmd(page, url));
-  });
-
-program
-  .command('click')
-  .argument('<selector>')
-  .description('Click element matching CSS selector')
-  .action(async (selector) => {
-    const opts = program.opts();
-    await createChrome({ headless: !!opts.headless, debug: !!opts.debug });
-    await withPage(async (page) => clickCmd(page, selector));
-  });
-
-program
-  .command('type')
-  .argument('<selector>')
-  .argument('<text>')
-  .description('Type text into element matching selector')
-  .action(async (selector, text) => {
-    const opts = program.opts();
-    await createChrome({ headless: !!opts.headless, debug: !!opts.debug });
-    await withPage(async (page) => typeCmd(page, selector, text));
-  });
-
-program
-  .command('screenshot')
-  .argument('[path]', 'file path', 'screenshot.png')
-  .description('Save screenshot')
-  .action(async (path) => {
-    const opts = program.opts();
-    await createChrome({ headless: !!opts.headless, debug: !!opts.debug });
-    await withPage(async (page) => screenshot(page, path));
-  });
+// No local Playwright controls; all browser work is delegated to Auggie (MCP)
 
 program
   .command('agent')
@@ -164,15 +98,7 @@ program
 registerReviewCommand(program, { startCliSpinner });
 
 // Project commands
-program
-  .command('test')
-  .argument('<scenario...>')
-  .description('Run an AI-driven test scenario against your local app')
-  .action(async (scenarioParts) => {
-    const opts = program.opts();
-    const scenario = Array.isArray(scenarioParts) ? scenarioParts.join(' ') : String(scenarioParts);
-    await runProjectTest(scenario, { headless: !!opts.headless, debug: !!opts.debug });
-  });
+// Removed legacy local test runner; use `qlood agent` or review workflows instead.
 
 
 

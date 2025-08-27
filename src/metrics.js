@@ -6,8 +6,6 @@ const emitter = new EventEmitter();
 const counters = {
   llmCalls: 0,
   auggieCalls: 0,
-  toolCalls: 0,
-  lastTool: '',
 };
 
 export function incLLMCalls() {
@@ -20,11 +18,7 @@ export function incAuggieCalls() {
   emitter.emit('update', { ...counters });
 }
 
-export function incToolCalls(toolName = '') {
-  counters.toolCalls += 1;
-  counters.lastTool = String(toolName || '');
-  emitter.emit('update', { ...counters });
-}
+// Removed tool call metrics: no local tool runner remains
 
 export function getMetrics() {
   return { ...counters };
@@ -34,4 +28,3 @@ export function onMetricsUpdate(listener) {
   emitter.on('update', listener);
   return () => emitter.off('update', listener);
 }
-

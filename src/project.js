@@ -414,10 +414,8 @@ export function extractCleanMarkdown(rawResponse) {
   const lines = rawResponse.split('\n');
   const filtered = [];
 
-  let inToolCall = false;
   let inCodeBlock = false;
   let inCatListing = false; // after "Here's the result of running `cat -n`..."
-  let skipNextEmoji = false;
 
   function isScanNarration(s) {
     const t = s.trim();
@@ -465,32 +463,15 @@ export function extractCleanMarkdown(rawResponse) {
     // Skip generic scan narration and directory listings
     if (isScanNarration(trimmed)) continue;
 
-    // Skip tool call blocks/artifacts
-    if (trimmed.startsWith('<function_calls>') || trimmed.includes('[90m🔧 Tool call:')) {
-      inToolCall = true;
-      continue;
-    }
-    if (trimmed.startsWith('</function_calls>') || trimmed.includes('[90m📋 Tool result:')) {
-      inToolCall = false;
-      skipNextEmoji = true;
-      continue;
-    }
-    if (inToolCall) continue;
-
     if (
       trimmed.startsWith('<invoke') ||
       trimmed.startsWith('<') ||
       trimmed.startsWith('[90m') ||
-      trimmed.includes('Tool call:') ||
-      trimmed.includes('Tool result:') ||
-      trimmed.startsWith('🤖') ||
-      trimmed.startsWith('❌ Error:') ||
+      // Removed legacy tool-call scrubbers (now unused)
       trimmed.startsWith("I'll quickly scan") ||
       trimmed.startsWith("I'll list") ||
       trimmed.startsWith('Running these') ||
-      (skipNextEmoji && trimmed.startsWith('🤖'))
     ) {
-      skipNextEmoji = false;
       continue;
     }
 
