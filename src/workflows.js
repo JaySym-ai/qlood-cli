@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { ensureProjectDirs, getProjectDir, extractCleanMarkdown } from './project.js';
+import { ensureProjectDirs, getProjectDir } from './project.js';
 import { executeCustomPrompt, checkAuthentication } from './auggie-integration.js';
 import { debugLogger } from './debug.js';
 
@@ -114,13 +114,19 @@ export async function addWorkflow(description, { cwd = process.cwd() } = {}) {
   const outDir = getWorkflowsDir(cwd);
   const outPath = path.join(outDir, file);
 
-  // Compose a workflow-specific prompt oriented for Playwright with project context
-  const prompt = buildWorkflowPrompt(description, cwd);
+  // Compose workflow prompt and instruct Auggie to write the file itself
+  const basePrompt = buildWorkflowPrompt(description, cwd);
+  const relOutPath = path.relative(cwd, outPath);
+  const writeInstruction = `\n\nACTION:\n- Write the full Markdown workflow to \"${relOutPath}\" (overwrite if it exists)\n- Use UTF-8 encoding\n- Do not ask for confirmation`;
+  const prompt = `${basePrompt}${writeInstruction}`;
 
   const res = await executeCustomPrompt(prompt, { usePrintFormat: true });
-  const content = extractCleanMarkdown((res.success ? res.stdout : '').trim());
-  const final = content && content.length > 50 ? content : `# ${description}\n\n1. Open the app homepage.\n2. Describe the steps to accomplish: ${description}.\n3. Assert expected UI and network results.\n`;
-  fs.writeFileSync(outPath, final);
+
+  // Verify file was created by Auggie; minimal fallback if not
+  if (!fs.existsSync(outPath)) {
+    const fallback = `# ${description}\n\n1. Open the app homepage.\n2. Describe the steps to accomplish: ${description}.\n3. Assert expected UI and network results.\n`;
+    try { fs.writeFileSync(outPath, fallback); } catch {}
+  }
   return { id, file, path: outPath };
 }
 
@@ -161,7 +167,12 @@ Current Project Information:${contextSection}${structureSection}${configSection}
 --- Existing Workflow to Update ---
 ${prev}`;
 
-  const res = await executeCustomPrompt(prompt, { usePrintFormat: true });
+  const relPath = path.relative(cwd, p);
+  const writeInstruction = `\n\nACTION:\n- Write the updated Markdown workflow to \"${relPath}\" (overwrite)\n- Use UTF-8 encoding\n- Do not ask for confirmation`;
+  const finalPrompt = `${prompt}${writeInstruction}`;
+
+
+  const res = await executeCustomPrompt(finalPrompt, { usePrintFormat: true });
   const next = extractCleanMarkdown((res.success ? res.stdout : '').trim());
   if (next && next.length > 20) {
     fs.writeFileSync(p, next);

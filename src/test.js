@@ -1,7 +1,7 @@
 import { ensureProjectInit, loadProjectConfig, ensureProjectDirs, getProjectDir } from './project.js';
 import { createChrome, ensurePage } from './chrome.js';
 import { gotoCmd } from './commands.js';
-import { runAgent } from './agent.js';
+import { executeCustomPrompt, checkAuthentication } from './auggie-integration.js';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
@@ -131,14 +131,17 @@ export async function runProjectTest(goal, { headless, debug, onLog, artifactsDi
   const initialShot = path.join(runDir, 'initial.png');
   try { await page.screenshot({ path: initialShot, fullPage: true }); } catch {}
 
-  // Run the AI-driven test scenario
+  // Run the AI-driven test scenario via Auggie (non-interactive)
   log(`Running test: ${goal}`);
   try {
-    await runAgent(goal, { debug: !!debug, headless: headless ?? cfg.browser?.headless ?? false, promptForApiKey: true, onLog: (m) => {
-      const line = `[agent] ${m}`;
-      if (onLog) onLog(line); else console.log(line);
-      try { fs.appendFileSync(path.join(runDir, 'agent.log'), line + '\n'); } catch {}
-    }});
+    const auth = await checkAuthentication();
+    if (!auth.success || !auth.authenticated) {
+      throw new Error('Auggie authentication required. Run `auggie --login`.');
+    }
+    const res = await executeCustomPrompt(`Execute the following end-to-end test scenario using Playwright. Use headless mode.\n\nScenario:\n${goal}`, { usePrintFormat: true });
+    const line = `[agent] ${res.success ? 'Completed' : 'Failed'}: ${res.stdout || res.stderr || ''}`.trim();
+    if (onLog) onLog(line); else console.log(line);
+    try { fs.appendFileSync(path.join(runDir, 'agent.log'), line + '\n'); } catch {}
   } finally {
     // Save final screenshot into run directory
     try {

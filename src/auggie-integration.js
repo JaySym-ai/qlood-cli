@@ -1,4 +1,5 @@
 import { spawn, exec } from 'child_process';
+import path from 'path';
 
 import { incAuggieCalls } from './metrics.js';
 import { debugLogger } from './debug.js';
@@ -336,15 +337,19 @@ export class AuggieIntegration {
   async _executeAuggieCommand(prompt, options = {}) {
     const args = [];
 
-    // Use --print format if specified
-    if (options.usePrintFormat) {
+    // Always include MCP config and compact mode for non-interactive calls
+    const mcpConfigRel = path.join('.qlood', 'mcp-config.json');
+    args.push('--mcp-config', mcpConfigRel, '--compact');
+
+    // Default to print mode unless explicitly disabled
+    const usePrint = options.usePrintFormat !== false;
+    if (usePrint) {
       args.push('--print', prompt);
     } else {
       // Add any additional flags
       if (options.flags) {
         args.push(...options.flags);
       }
-
       // Add the prompt as the last argument
       args.push(prompt);
     }

@@ -25,7 +25,7 @@ Qlood CLI is built around Auggie, the AugmentCode.com CLI, running in non‑inte
 - Learn more: https://www.augmentcode.com/
 
 
-Open-source CLI to help you test your own app. qlood initializes a project-local `./.qlood/` folder, then uses AI-driven browser automation (Chromium via Playwright + OpenRouter LLMs) to explore and find bugs in your web app. Mobile emulators (Android/iOS) are on the roadmap.
+Open-source CLI to help you test your own app. qlood initializes a project-local `./.qlood/` folder, then uses AI-driven browser automation powered by Auggie (via MCP Playwright in headless mode) to explore and find bugs in your web app. Mobile emulators (Android/iOS) are on the roadmap.
 
 - One-package install with bundled Chromium
 - Project-local state in `./.qlood` (config, results, notes)
@@ -42,7 +42,7 @@ Open-source CLI to help you test your own app. qlood initializes a project-local
 - Local development:
   1) npm install
   2) npm link
-  3) Set API key: export `OPENROUTER_API_KEY=...` (or use TUI `/key`)
+  3) Authenticate Auggie: run `auggie --login` (install via `qlood auggie-check` if needed)
 
 - As a global package (when published):
   `npm i -g qlood-cli`
@@ -169,7 +169,7 @@ Interactive TUI
 See /help or `qlood --help` for low-level commands.
 
 ### Environment
-- `OPENROUTER_API_KEY`: your OpenRouter API key
+- Authenticate Auggie once with `auggie --login` (no separate API keys needed)
 - `QLOOD_TEST_USERNAME`: username for login workflows (dev/CI)
 - `QLOOD_TEST_PASSWORD`: password for login workflows (dev/CI)
 
@@ -183,7 +183,7 @@ Security note
 - `bin/qlood.js`: CLI entrypoint (Commander)
 - `src/chrome.js`: Browser lifecycle and page helpers
 - `src/commands.js`: Low-level page actions (open/goto/click/type)
-- `src/agent.js`: AI agent loop powered by OpenRouter
+- (removed) `src/agent.js`: legacy agent loop — replaced by Auggie CLI + MCP Playwright
 - `src/project.js`: Project `./.qlood` folder and config helpers
 - `src/test.js`: Project-level test runner that opens your app and runs scenarios
 - `src/tui.js`: Interactive TUI for quick testing

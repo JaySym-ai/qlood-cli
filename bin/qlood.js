@@ -14,13 +14,12 @@ import { Command } from 'commander';
 import dotenv from 'dotenv';
 import { createChrome, withPage, screenshot, cancelCurrentAction } from '../src/chrome.js';
 import { clickCmd, typeCmd, gotoCmd, openCmd } from '../src/commands.js';
-import { runAgent } from '../src/agent.js';
 import { runTui } from '../src/tui.js';
-import { loadConfig, setApiKey, setMainPrompt, setSystemInstructions } from '../src/config.js';
+import { setMainPrompt, setSystemInstructions } from '../src/config.js';
 import { runProjectTest } from '../src/test.js';
 import { debugLogger } from '../src/debug.js';
-import { ensureAuggieUpToDate } from '../src/auggie-integration.js';
-import { generateProjectContext, getProjectDir } from '../src/project.js';
+import { ensureAuggieUpToDate, executeRawCommand } from '../src/auggie-integration.js';
+import { getProjectDir, ensureProjectInit } from '../src/project.js';
 import fs from 'fs/promises';
 import { registerReviewCommand } from '../src/commands/review.js';
 
@@ -56,7 +55,6 @@ process.on('SIGINT', async () => {
 
 await checkAndAutoUpdateUtil(currentVersion);
 
-const cfgDefaults = loadConfig();
 
 program
   .name('qlood')
@@ -119,29 +117,33 @@ program
 
 program
   .command('agent')
-  .argument('<goal>')
-  .description('Run an LLM-driven loop to achieve a goal (experimental)')
-  .action(async (goal) => {
-    const opts = program.opts();
-    await runAgent(goal, opts);
+  .argument('<goal...>')
+  .description('Run Auggie to achieve a goal using MCP Playwright (headless)')
+  .action(async (goalParts) => {
+    const goal = Array.isArray(goalParts) ? goalParts.join(' ') : String(goalParts);
+    // Ensure project is initialized and MCP config exists
+    await ensureProjectInit();
+    // Delegate to Auggie CLI with required flags (--mcp-config, --compact, --print)
+    const result = await executeRawCommand(['--mcp-config', '.qlood/mcp-config.json', '--compact', '--print', goal], { cwd: process.cwd() });
+    if (!result.success) {
+      console.error('Auggie error:', result.stderr || 'Unknown error');
+      process.exit(1);
+    } else {
+      console.log(result.stdout);
+    }
   });
 
-// Config commands
+// Config commands (no API key management; Auggie handles auth)
 program
   .command('config')
-  .description('Manage qlood configuration (model, api key, prompt)')
-
-  .addCommand(new Command('key')
-    .argument('<apiKey>')
-    .description('Set OpenRouter API key (stored in ~/.qlood/config.json)')
-    .action((apiKey) => { setApiKey(apiKey); console.log('API key updated'); }))
+  .description('Manage qlood configuration (prompts)')
   .addCommand(new Command('prompt')
     .argument('<prompt>')
-    .description('Set main system prompt for AI agent')
+    .description('Set main system prompt for AI features')
     .action((prompt) => { setMainPrompt(prompt); console.log('Main prompt updated'); }))
   .addCommand(new Command('instructions')
     .argument('<instructions>')
-    .description('Set additional system instructions for AI agent')
+    .description('Set additional system instructions for AI features')
     .action((instructions) => { setSystemInstructions(instructions); console.log('System instructions updated'); }))
   .addCommand(new Command('debug')
     .description('Enable debug mode for detailed logging')
@@ -172,25 +174,7 @@ program
     await runProjectTest(scenario, { headless: !!opts.headless, debug: !!opts.debug });
   });
 
-program
-  .command('init-context')
-  .description('Generate or regenerate the project context file at ./.qlood/notes/context.md')
-  .action(async () => {
-    const spinner = startCliSpinner('Generating project context with Auggie... This may take several minutes.');
-    try {
-      const success = await generateProjectContext(process.cwd(), { silent: true });
-      if (success) {
-        spinner.stop('Project context generated successfully', true);
-        process.exit(0);
-      } else {
-        spinner.stop('Could not generate project context', false);
-        process.exit(1);
-      }
-    } catch (error) {
-      spinner.stop(`Error generating project context: ${error.message}`, false);
-      process.exit(1);
-    }
-  });
+
 
 // Delete command to remove .qlood directory
 async function deleteQloodDir() {
@@ -256,60 +240,7 @@ program
     }
   });
 
-program
-  .command('auggie-context')
-  .description('Show project info from ./.qlood/notes/context.md (use --update to regenerate)')
-  .option('-u, --update', 'Regenerate context with Auggie before showing', false)
-  .action(async (cmdOpts) => {
-    const cwd = process.cwd();
-    const qloodContextPath = path.join(getProjectDir(cwd), 'notes', 'context.md');
-    const rootContextPath = path.join(cwd, 'context.md');
 
-    try {
-      // If not updating and context file exists, read and print it
-      if (!cmdOpts.update) {
-        try {
-          // Prefer ./.qlood/notes/context.md, else fall back to ./context.md
-          let contextPathToRead = qloodContextPath;
-          try { await fs.access(qloodContextPath); }
-          catch {
-            await fs.access(rootContextPath);
-            contextPathToRead = rootContextPath;
-          }
-          const content = await fs.readFile(contextPathToRead, 'utf-8');
-          const stat = await fs.stat(contextPathToRead);
-          const rel = path.relative(cwd, contextPathToRead);
-          console.log(`\n--- Project Context (${rel}) ---`);
-          console.log(`Last updated: ${new Date(stat.mtime).toISOString()}\n`);
-          console.log(content);
-          process.exit(0);
-          return;
-        } catch {}
-      }
-
-      // Otherwise, (re)generate using Auggie and then print
-      const spinner = startCliSpinner((cmdOpts.update ? 'Updating' : 'Generating') + ' project context with Auggie... This may take several minutes.');
-      const ok = await generateProjectContext(cwd, { silent: true });
-      if (!ok) {
-        spinner.stop('Failed to generate project context with Auggie', false);
-        process.exit(1);
-      } else {
-        spinner.stop('Project context ready', true);
-      }
-
-      // Read the freshly generated file
-      const content = await fs.readFile(qloodContextPath, 'utf-8');
-      const stat = await fs.stat(qloodContextPath);
-      const rel = path.relative(cwd, qloodContextPath);
-      console.log(`\n--- Project Context (${rel}) ---`);
-      console.log(`Last updated: ${new Date(stat.mtime).toISOString()}\n`);
-      console.log(content);
-      process.exit(0);
-    } catch (error) {
-      console.error(`✗ Error getting project context: ${error.message}`);
-      process.exit(1);
-    }
-  });
 
 if (process.argv.length <= 2) {
   // No args -> launch TUI by default

@@ -11,7 +11,6 @@ export function ensureProjectDirs(cwd = process.cwd()) {
   const base = getProjectDir(cwd);
   const dirs = [
     base,
-    path.join(base, 'notes'),
     path.join(base, 'results'),
     // Canonical directory for workflows
     path.join(base, 'workflows'),
@@ -49,7 +48,7 @@ export function defaultProjectConfig() {
       waitIntervalMs: 1000
     },
     browser: {
-      headless: false
+      headless: true
     },
     metadata: {
       createdAt: new Date().toISOString(),
@@ -1071,7 +1070,7 @@ function isImportantDependency(dep) {
   return important.some(imp => dep.includes(imp));
 }
 
-export async function ensureProjectInit({ cwd = process.cwd(), force = false, skipContext = false } = {}) {
+export async function ensureProjectInit({ cwd = process.cwd(), force = false } = {}) {
   const base = ensureProjectDirs(cwd);
   const p = getProjectConfigPath(cwd);
   let wasInitialized = false;
@@ -1086,13 +1085,20 @@ export async function ensureProjectInit({ cwd = process.cwd(), force = false, sk
     saveProjectStructure(structure, cwd);
     wasInitialized = true;
 
-    // Only generate context if not skipped (for TUI to handle with animation)
-    if (!skipContext) {
-      try {
-        await generateProjectContext(cwd);
-      } catch (error) {
-        console.warn('Warning: Failed to generate project context:', error.message);
-      }
+    // Create MCP config for Playwright (used by Auggie)
+    try {
+      const mcpPath = path.join(base, 'mcp-config.json');
+      const mcpConfig = {
+        mcpServers: {
+          Playwright: {
+            command: 'npx',
+            args: ['-y', '@playwright/mcp@latest']
+          }
+        }
+      };
+      fs.writeFileSync(mcpPath, JSON.stringify(mcpConfig, null, 2), 'utf-8');
+    } catch (e) {
+      console.warn('Warning: Failed to create MCP config:', e.message);
     }
   }
   return { base, wasInitialized };

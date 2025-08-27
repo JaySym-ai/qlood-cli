@@ -24,21 +24,6 @@ export function saveConfig(cfg) {
   try { fs.chmodSync(p, 0o600); } catch {}
 }
 
-export function setApiKey(key) {
-  const cfg = loadConfig();
-  // Sanitize API key to prevent Unicode corruption
-  cfg.apiKey = key.replace(/[\uFFFD]/g, '').trim();
-  saveConfig(cfg);
-}
-
-export function getModel() {
-  return 'moonshotai/kimi-k2';
-}
-
-export function getApiKey() {
-  const cfg = loadConfig();
-  return process.env.OPENROUTER_API_KEY || cfg.apiKey;
-}
 
 export function setMainPrompt(prompt) {
   const cfg = loadConfig();
