@@ -178,7 +178,47 @@ export async function runTui() {
     renderTimer = setTimeout(() => {
       renderTimer = null;
       try { screen.render(); } catch {}
+  // Bounded live stream into the log: keep only the last N lines of stream
+  const STREAM_MAX_LINES = Number(process.env.QLOOD_STREAM_MAX_LINES || 200);
+  function boundedStreamAppend(text) {
+    const content = log.getContent();
+    const parts = content.split('\n');
+    // Find the last non-stream marker; we treat everything after the last "Starting:" as stream for simplicity
+    let splitIdx = parts.lastIndexOf('{cyan-fg}Starting:');
+    if (splitIdx === -1) splitIdx = parts.length; // no starting marker, append at end
+
+    // Existing stream tail
+    const head = parts.slice(0, splitIdx + 1);
+    const tail = parts.slice(splitIdx + 1);
+
+    // New stream lines
+    const newLines = String(text || '').split('\n');
+    const combined = [...tail, ...newLines].filter(Boolean);
+
+    // Trim to last STREAM_MAX_LINES
+    const trimmedTail = combined.slice(-STREAM_MAX_LINES);
+
+    const next = [...head, ...trimmedTail].join('\n');
+    log.setContent(next);
+  }
     }, 80);
+  }
+
+
+  // Bounded live stream into the log: keep only the last N lines of stream (top-level, correct scope)
+  function boundedStreamAppendTop(text) {
+    const max = Number(process.env.QLOOD_STREAM_MAX_LINES || 200);
+    const content = log.getContent();
+    const parts = content.split('\n');
+    // Treat everything after the last "Starting:" line as the live stream tail
+    let splitIdx = parts.lastIndexOf('{cyan-fg}Starting:');
+    if (splitIdx === -1) splitIdx = parts.length;
+    const head = parts.slice(0, splitIdx + 1);
+    const tail = parts.slice(splitIdx + 1);
+    const newLines = String(text || '').split('\n');
+    const combined = [...tail, ...newLines].filter(Boolean);
+    const trimmedTail = combined.slice(-max);
+    log.setContent([...head, ...trimmedTail].join('\n'));
   }
 
   // Throttled stream logging buffer
@@ -193,7 +233,7 @@ export async function runTui() {
   function flushStreamLog() {
     if (streamFlushTimer) { clearTimeout(streamFlushTimer); streamFlushTimer = null; }
     if (!streamBuffer) return;
-    addLog(streamBuffer.trimEnd());
+    boundedStreamAppendTop(streamBuffer.trimEnd());
     streamBuffer = '';
   }
 
