@@ -4,7 +4,7 @@ import path from 'path';
 import { setMainPrompt, setSystemInstructions } from './config.js';
 import { debugLogger } from './debug.js';
 import { ensureProjectInit, loadProjectConfig, getProjectDir, ensureProjectDirs, extractCleanMarkdown } from './project.js';
-import { checkAuthentication, executeCustomPromptStream } from './auggie-integration.js';
+import { checkAuthentication, executeCustomPromptStream, cancelActiveAuggie, hasActiveAuggie } from './auggie-integration.js';
 
 import { addWorkflow, updateWorkflow, deleteWorkflow, listWorkflows } from './workflows.js';
 
@@ -733,9 +733,9 @@ export async function runTui() {
         } catch (e) {
           addLog(`{red-fg}wfdel error:{/} ${e?.message || e}`);
         }
-      } else if (cmd.startsWith('/wdupdate ')) {
-        const id = Number(cmd.replace('/wdupdate ', '').trim());
-        if (!id) return addLog('Usage: /wdupdate <id>');
+      } else if (cmd.startsWith('/wfupdate ')) {
+        const id = Number(cmd.replace('/wfupdate ', '').trim());
+        if (!id) return addLog('Usage: /wfupdate <id>');
         const authResult = await checkAuthentication();
         if (!authResult.success || !authResult.authenticated) {
           addLog(`{red-fg}❌ Authentication required to update workflows.{/}`);
@@ -766,8 +766,8 @@ export async function runTui() {
           stopStream();
           addLog(res.updated ? `{green-fg}Workflow updated{/}: ${res.file}` : `{yellow-fg}No changes applied{/}: ${res.file}`);
         } catch (e) {
-          stopLoadingAnimation(`wdupdate error: ${e?.message || e}`, false);
-          addLog(`{red-fg}wdupdate error:{/} ${e?.message || e}`);
+          stopLoadingAnimation(`wfupdate error: ${e?.message || e}`, false);
+          addLog(`{red-fg}wfupdate error:{/} ${e?.message || e}`);
         }
       } else if (cmd === '/wfls') {
         const items = listWorkflows();
@@ -824,7 +824,7 @@ export async function runTui() {
         addLog('{bold}Commands:{/}');
         addLog('  {cyan-fg}/wfadd <description>{/} - Create a new test workflow');
         addLog('  {cyan-fg}/wfls{/} - List all available workflows');
-        addLog('  {cyan-fg}/wdupdate <id>{/} - Update workflow to match code changes');
+        addLog('  {cyan-fg}/wfupdate <id>{/} - Update workflow to match code changes');
         addLog('  {cyan-fg}/wfdel <id>{/} - Delete a workflow');
         addLog('  {cyan-fg}/refactor{/} - Analyze repo and save a refactor plan under ./.qlood/results');
         addLog('  {cyan-fg}/clean{/} - Delete all files under ./.qlood/debug and ./.qlood/results');
@@ -962,10 +962,27 @@ export async function runTui() {
     screen.render();
   });
 
-  // Ctrl+C behavior: exits the TUI.
+  // Ctrl+C behavior: cancel/kill active Auggie first; double-press to force, exit if idle
   let lastCtrlC = 0;
   screen.key(['C-c'], async () => {
+    const now = Date.now();
+    const withinDouble = (now - lastCtrlC) < 1000;
+    lastCtrlC = now;
 
+    // If a stream/refactor is running, try to interrupt it gracefully
+    if (hasActiveAuggie && hasActiveAuggie()) {
+      if (withinDouble) {
+        cancelActiveAuggie({ force: true });
+        addLog('{yellow-fg}Force-killed Auggie (SIGKILL).{/}');
+        setStreamSpinner(false);
+      } else {
+        cancelActiveAuggie({ force: false });
+        addLog('{yellow-fg}Sent SIGINT to Auggie (press Ctrl+C again quickly to force kill).{/}');
+      }
+      return; // Do not exit TUI on first Ctrl+C when something is running
+    }
+
+    // Nothing running: exit the TUI
     if (spinnerTimer) clearInterval(spinnerTimer);
     if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
     teardownAndExit(0);

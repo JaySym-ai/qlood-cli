@@ -13,6 +13,8 @@ export class AuggieIntegration {
     // By default, do not enforce a timeout for Auggie commands. Use null to mean "no timeout".
     this.timeout = options.timeout ?? null;
     this.maxBuffer = options.maxBuffer || 1024 * 1024 * 10; // 10MB
+    // Track active spawned process for streaming so the TUI can cancel it
+    this.activeChild = null;
   }
 
   /**
@@ -372,6 +374,8 @@ export class AuggieIntegration {
 
     return new Promise((resolve) => {
       const child = spawn(cmd, cmdArgs, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      // Register as active child so callers can cancel via exported helper
+      try { this.activeChild = child; } catch {}
       child.stdout.setEncoding && child.stdout.setEncoding('utf8');
       child.stderr.setEncoding && child.stderr.setEncoding('utf8');
       let stdout = '';
@@ -395,6 +399,7 @@ export class AuggieIntegration {
           const duration = 0; // duration not tracked here for simplicity
           debugLogger.logAuggieResponse(command, result, duration);
         }
+        try { if (this.activeChild === child) this.activeChild = null; } catch {}
         resolve(result);
       });
 
@@ -403,6 +408,7 @@ export class AuggieIntegration {
         if (command === this.auggieCommand) {
           debugLogger.logAuggieResponse(command, result, 0, error);
         }
+        try { if (this.activeChild === child) this.activeChild = null; } catch {}
         resolve(result);
       });
     });
@@ -418,6 +424,23 @@ export class AuggieIntegration {
     }
     return arg;
   }
+
+  // Expose cancellation helpers
+  hasActiveAuggie() {
+    try { return !!(this.activeChild && !this.activeChild.killed); } catch { return false; }
+  }
+
+  cancelActiveAuggie({ force = false, signal } = {}) {
+    const child = this.activeChild;
+    if (!child) return false;
+    const sig = signal || (force ? 'SIGKILL' : 'SIGINT');
+    try {
+      child.kill(sig);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 // Convenience functions for direct use
@@ -430,6 +453,8 @@ export const executeCustomPromptStream = (prompt, options, handlers) => defaultA
 export const checkAuthentication = () => defaultAuggie.checkAuthentication();
 export const executeRawCommand = (args, options) => defaultAuggie.executeRawCommand(args, options);
 export const executeRawCommandStream = (args, options, handlers) => defaultAuggie.executeRawCommandStream(args, options, handlers);
+export const cancelActiveAuggie = (opts) => defaultAuggie.cancelActiveAuggie(opts);
+export const hasActiveAuggie = () => defaultAuggie.hasActiveAuggie();
 
 // Export the class as default
 export default AuggieIntegration;
