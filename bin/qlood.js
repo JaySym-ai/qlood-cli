@@ -64,6 +64,8 @@ program
       process.exit(1);
     } else {
       console.log(result.stdout);
+      // Exit cleanly after agent run completes so we don't fall back to TUI
+      process.exit(0);
     }
   });
 

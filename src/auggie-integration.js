@@ -1,5 +1,6 @@
 import { spawn, exec } from 'child_process';
 import path from 'path';
+import fs from 'fs';
 
 import { incAuggieCalls } from './metrics.js';
 import { debugLogger } from './debug.js';
@@ -316,6 +317,20 @@ export class AuggieIntegration {
         stderr: stderr.trim()
       };
 
+      // Persist full outputs to per-session folder (non-streaming)
+      try {
+        if (command === this.auggieCommand && debugLogger.isEnabled()) {
+          const info = debugLogger.getSessionInfo();
+          const dir = info.sessionDir;
+          if (dir) {
+            const idx = debugLogger.nextAuggieIndex();
+            const base = `auggie_call_${String(idx).padStart(3, '0')}`;
+            fs.writeFileSync(path.join(dir, `${base}_stdout.txt`), result.stdout || '');
+            fs.writeFileSync(path.join(dir, `${base}_stderr.txt`), result.stderr || '');
+          }
+        }
+      } catch {}
+
       // Log Auggie response (only for Auggie commands)
       if (command === this.auggieCommand) {
         const duration = new Date() - startTime;
@@ -381,15 +396,36 @@ export class AuggieIntegration {
       let stdout = '';
       let stderr = '';
 
+      // Optional per-call streaming capture into session folder
+      let streamFiles = null;
+      try {
+        if (command === this.auggieCommand && debugLogger.isEnabled()) {
+          const info = debugLogger.getSessionInfo();
+          if (info.sessionDir) {
+            const idx = debugLogger.nextAuggieIndex();
+            const base = `auggie_call_${String(idx).padStart(3, '0')}`;
+            streamFiles = {
+              out: path.join(info.sessionDir, `${base}_stdout.txt`),
+              err: path.join(info.sessionDir, `${base}_stderr.txt`)
+            };
+            // Touch files so they exist immediately
+            try { fs.writeFileSync(streamFiles.out, ''); } catch {}
+            try { fs.writeFileSync(streamFiles.err, ''); } catch {}
+          }
+        }
+      } catch {}
+
       child.stdout.on('data', (chunk) => {
         const text = typeof chunk === 'string' ? chunk : chunk.toString();
         stdout += text;
+        try { if (streamFiles?.out) fs.appendFileSync(streamFiles.out, text); } catch {}
         try { handlers.onStdout && handlers.onStdout(text); } catch {}
       });
 
       child.stderr.on('data', (chunk) => {
         const text = typeof chunk === 'string' ? chunk : chunk.toString();
         stderr += text;
+        try { if (streamFiles?.err) fs.appendFileSync(streamFiles.err, text); } catch {}
         try { handlers.onStderr && handlers.onStderr(text); } catch {}
       });
 

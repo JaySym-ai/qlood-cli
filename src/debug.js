@@ -1,30 +1,45 @@
 import fs from 'fs';
 import path from 'path';
 
-function cleanupOldDebugFiles(debugDir, maxFiles = 5) {
+function cleanupOldDebugFiles(debugDir, maxSessions = 5) {
   try {
     if (!fs.existsSync(debugDir)) return;
-    
-    // Get all debug files
-    const files = fs.readdirSync(debugDir)
+
+    const entries = fs.readdirSync(debugDir)
+      .map(name => ({ name, full: path.join(debugDir, name) }))
+      .filter(e => {
+        try { return fs.statSync(e.full).isDirectory() && e.name.startsWith('debug_session_'); } catch { return false; }
+      })
+      .map(e => ({ ...e, stat: fs.statSync(e.full) }))
+      .sort((a, b) => b.stat.mtime - a.stat.mtime); // newest first
+
+    if (entries.length > maxSessions) {
+      const toDelete = entries.slice(maxSessions);
+      for (const e of toDelete) {
+        try {
+          fs.rmSync(e.full, { recursive: true, force: true });
+        } catch (err) {
+          console.error(`Failed to delete old debug session ${e.name}:`, err.message);
+        }
+      }
+    }
+
+    // Backward-compat: also trim legacy root-level debug-*.txt files
+    const legacyFiles = fs.readdirSync(debugDir)
       .filter(file => file.startsWith('debug-') && file.endsWith('.txt'))
       .map(file => ({
         name: file,
-        path: path.join(debugDir, file),
+        full: path.join(debugDir, file),
         stat: fs.statSync(path.join(debugDir, file))
       }))
-      .sort((a, b) => b.stat.mtime - a.stat.mtime); // Sort by modification time, newest first
-    
-    // Remove files beyond maxFiles limit
-    if (files.length > maxFiles) {
-      const filesToDelete = files.slice(maxFiles);
-      filesToDelete.forEach(file => {
-        try {
-          fs.unlinkSync(file.path);
-        } catch (err) {
-          console.error(`Failed to delete old debug file ${file.name}:`, err.message);
+      .sort((a, b) => b.stat.mtime - a.stat.mtime);
+    if (legacyFiles.length > maxSessions) {
+      const del = legacyFiles.slice(maxSessions);
+      for (const f of del) {
+        try { fs.unlinkSync(f.full); } catch (err) {
+          console.error(`Failed to delete old debug file ${f.name}:`, err.message);
         }
-      });
+      }
     }
   } catch (error) {
     console.error('Failed to cleanup old debug files:', error.message);
@@ -36,8 +51,10 @@ export class DebugLogger {
     this.debugEnabled = false;
     this.debugFile = null;
     this.sessionId = null;
+    this.sessionDir = null;
     this.stepCounter = 0;
     this.autoEnabled = false;
+    this.auggieCounter = 0;
   }
 
   enable(projectPath = process.cwd(), silent = false) {
@@ -46,21 +63,28 @@ export class DebugLogger {
     this.debugEnabled = true;
     this.sessionId = new Date().toISOString().replace(/[:.]/g, '-').split('.')[0];
     this.stepCounter = 0;
+    this.auggieCounter = 0;
 
-    // Create debug directory
-    const debugDir = path.join(projectPath, '.qlood', 'debug');
-    if (!fs.existsSync(debugDir)) {
-      fs.mkdirSync(debugDir, { recursive: true });
+    // Create debug root directory
+    const debugRoot = path.join(projectPath, '.qlood', 'debug');
+    if (!fs.existsSync(debugRoot)) {
+      fs.mkdirSync(debugRoot, { recursive: true });
     }
 
-    // Cleanup old debug files before creating new one
-    cleanupOldDebugFiles(debugDir, 5);
+    // Cleanup old debug sessions/files before creating new one
+    cleanupOldDebugFiles(debugRoot, 5);
 
-    // Create debug file
+    // Create per-session directory: .qlood/debug/debug_session_<datetime>
+    this.sessionDir = path.join(debugRoot, `debug_session_${this.sessionId}`);
+    if (!fs.existsSync(this.sessionDir)) {
+      fs.mkdirSync(this.sessionDir, { recursive: true });
+    }
+
+    // Create debug file inside the session folder, keeping same naming convention
     const debugFileName = `debug-${this.sessionId}.txt`;
-    this.debugFile = path.join(debugDir, debugFileName);
+    this.debugFile = path.join(this.sessionDir, debugFileName);
 
-    // Initialize debug file (compact, no session id)
+    // Initialize debug file (compact JSONL entries)
     this.writeDebug('SESSION_START', {
       timestamp: new Date().toISOString(),
       workingDirectory: projectPath,
@@ -290,9 +314,16 @@ export class DebugLogger {
     return {
       enabled: this.debugEnabled,
       sessionId: this.sessionId,
+      sessionDir: this.sessionDir,
       debugFile: this.debugFile,
       stepCounter: this.stepCounter
     };
+  }
+
+  nextAuggieIndex() {
+    // 1-based counter for auggie call files within a session
+    this.auggieCounter = (this.auggieCounter || 0) + 1;
+    return this.auggieCounter;
   }
 }
 
