@@ -6,7 +6,7 @@ import { debugLogger } from './debug.js';
 import { ensureProjectInit, loadProjectConfig, getProjectDir, ensureProjectDirs, extractCleanMarkdown } from './project.js';
 import { checkAuthentication, executeCustomPromptStream, cancelActiveAuggie, hasActiveAuggie } from './auggie-integration.js';
 
-import { addWorkflow, updateWorkflow, deleteWorkflow, listWorkflows } from './workflows.js';
+import { addWorkflow, updateWorkflow, deleteWorkflow, listWorkflows, runWorkflow } from './workflows.js';
 
 import { buildRefactorPrompt } from './prompts/prompt.refactor.js';
 import { getMetrics, onMetricsUpdate } from './metrics.js';
@@ -160,13 +160,17 @@ export async function runTui() {
     heartbeatTimer = setInterval(() => {
       const now = Date.now();
       if (now - lastStreamChunkAt > 4000) {
-        addLog('{dim}… still working{/}');
+        // Avoid spamming the log while idle; just refresh status
+        renderStatus();
+        scheduleRender();
         lastStreamChunkAt = now;
       }
     }, 2000);
   }
 
   function stopStream() {
+    // Flush any buffered stream output before stopping indicators
+    try { flushStreamLog(); } catch {}
     setStreamSpinner(false);
     if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
   }
@@ -178,6 +182,9 @@ export async function runTui() {
     renderTimer = setTimeout(() => {
       renderTimer = null;
       try { screen.render(); } catch {}
+    }, 80);
+  }
+
   // Bounded live stream into the log: keep only the last N lines of stream
   const STREAM_MAX_LINES = Number(process.env.QLOOD_STREAM_MAX_LINES || 200);
   function boundedStreamAppend(text) {
@@ -200,8 +207,6 @@ export async function runTui() {
 
     const next = [...head, ...trimmedTail].join('\n');
     log.setContent(next);
-  }
-    }, 80);
   }
 
 
@@ -721,6 +726,7 @@ export async function runTui() {
           stopStream();
           addLog(`{green-fg}Workflow created{/}: ${file} (id: ${id})`);
         } catch (e) {
+          stopStream();
           stopLoadingAnimation(`wfadd error: ${e?.message || e}`, false);
           addLog(`{red-fg}wfadd error:{/} ${e?.message || e}`);
         }
@@ -766,6 +772,7 @@ export async function runTui() {
           stopStream();
           addLog(res.updated ? `{green-fg}Workflow updated{/}: ${res.file}` : `{yellow-fg}No changes applied{/}: ${res.file}`);
         } catch (e) {
+          stopStream();
           stopLoadingAnimation(`wfupdate error: ${e?.message || e}`, false);
           addLog(`{red-fg}wfupdate error:{/} ${e?.message || e}`);
         }
@@ -787,15 +794,57 @@ export async function runTui() {
       } else if (cmd.startsWith('/wf ')) {
         const idText = cmd.replace('/wf ', '').trim();
         const id = Number(idText);
+        if (!id) {
+          addLog('Usage: /wf <id>');
+          return;
+        }
         const items = listWorkflows();
         if (!items.length) {
           addLog('{yellow-fg}No workflows found in ./.qlood/workflows.{/}');
           addLog('Create one with: {bold}/wfadd <short description>{/}');
           addLog('Example: {cyan-fg}/wfadd User signup and login{/}');
-          addLog('{yellow-fg}Run functionality removed. Use `qlood agent` for goals.{/}');
           return;
         }
-        addLog('{yellow-fg}Running workflows from TUI is no longer supported.{/}');
+        const authResult = await checkAuthentication();
+        if (!authResult.success || !authResult.authenticated) {
+          addLog(`{red-fg}❌ Authentication required to run workflows.{/}`);
+          addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
+          showToast('Login required', 'error');
+          return;
+        }
+        addLog(`{cyan-fg}Starting: Running workflow ${id} with Auggie...{/}`);
+        startStream();
+        try {
+          const streamHandlers = {
+            onStdout: (chunk) => {
+              lastStreamChunkAt = Date.now();
+              const text = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, '');
+              if (text.trim().length === 0) return;
+              streamLog(text + "\n");
+              scheduleRender();
+            },
+            onStderr: (chunk) => {
+              lastStreamChunkAt = Date.now();
+              const text = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, '');
+              if (text.trim().length === 0) return;
+              streamLog(`{yellow-fg}${text}{/}\n`);
+              scheduleRender();
+            }
+          };
+          const res = await runWorkflow(id, { streamHandlers });
+          stopStream();
+          if (res.success) {
+            addLog(`{green-fg}Workflow ${id} completed{/}. Results: ${res.resultsDir}`);
+            showToast('Workflow complete', 'success');
+          } else {
+            addLog(`{red-fg}Workflow ${id} failed{/}. See results: ${res.resultsDir}`);
+            showToast('Workflow failed', 'error');
+          }
+        } catch (e) {
+          stopStream();
+          addLog(`{red-fg}wf error:{/} ${e?.message || e}`);
+          showToast('Workflow error', 'error');
+        }
       } else if (cmd === '/clean') {
         try {
           const base = getProjectDir(process.cwd());

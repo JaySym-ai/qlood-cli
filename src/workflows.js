@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { ensureProjectDirs, getProjectDir } from './project.js';
+import { ensureProjectDirs, getProjectDir, loadProjectConfig } from './project.js';
 import { executeCustomPrompt, executeCustomPromptStream, checkAuthentication } from './auggie-integration.js';
 import { debugLogger } from './debug.js';
 
@@ -243,5 +243,46 @@ function readContains(p, substr) {
   }
 }
 
+
+
+export async function runWorkflow(id, { cwd = process.cwd(), streamHandlers = null } = {}) {
+  const wf = listWorkflows(cwd).find(w => w.id === Number(id));
+  if (!wf) throw new Error(`Workflow ${id} not found`);
+  const wfPath = path.join(wf.dir, wf.file);
+
+  const auth = await checkAuthentication();
+  if (!auth.success || !auth.authenticated) {
+    throw new Error('Auggie authentication required. Run `auggie --login`.');
+  }
+
+  // Prepare result directory structure for this run
+  const results = createResultStructure(wf.id, cwd);
+  const relResultsDir = path.relative(cwd, results.dir);
+  const relWfPath = path.relative(cwd, wfPath);
+
+  // Build an execution prompt for Auggie using MCP Playwright
+  const cfg = loadProjectConfig(cwd) || {};
+  const baseUrl = cfg?.devServer?.url || '';
+  const guidance = `You are an automated QA agent with access to the Playwright MCP server.
+Goal: Execute the end-to-end testing workflow described in the Markdown file at "${relWfPath}".
+
+Instructions:
+- Read the workflow steps and follow them precisely with Playwright.
+- Use headless browser.
+- If a base URL is needed, use: ${baseUrl || '(no base URL provided; infer from the workflow)'}
+- Log each major step and assertion to stdout as you run.
+- Save a final Markdown run report to "${relResultsDir}/success/report.md" describing what was done and key outcomes.
+- If you encounter issues, still write a report and clearly mark failures; you may also write additional notes to "${relResultsDir}/warning/report.md".
+- Do not ask for confirmation. Execute autonomously.`;
+
+  // Stream execution so TUI can show live logs
+  if (streamHandlers) {
+    const res = await executeCustomPromptStream(guidance, { usePrintFormat: false, pty: true, cwd }, streamHandlers);
+    return { success: !!res.success, resultsDir: results.dir };
+  } else {
+    const res = await executeCustomPrompt(guidance, { usePrintFormat: true, cwd });
+    return { success: !!res.success, resultsDir: results.dir };
+  }
+}
 
 // Removed runWorkflow and runAllWorkflows: local Playwright runner deprecated.
