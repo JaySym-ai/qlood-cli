@@ -5,7 +5,7 @@ import { executeCustomPrompt, executeCustomPromptStream, checkAuthentication } f
 import { debugLogger } from './debug.js';
 
 import { buildWorkflowPrompt } from './prompts/prompt.workflow.js';
-// Safeguards to prevent E2BIG when building /wfupdate prompt
+// Safeguards to prevent E2BIG when building /wdupdate prompt
 const MAX_WFUP_CONTEXT = Number(process.env.QLOOD_MAX_WFUP_CONTEXT || process.env.QLOOD_MAX_WF_CONTEXT || 8000);
 const MAX_WFUP_STRUCTURE = Number(process.env.QLOOD_MAX_WFUP_STRUCTURE || process.env.QLOOD_MAX_WF_STRUCTURE || 8000);
 const MAX_WFUP_CONFIG = Number(process.env.QLOOD_MAX_WFUP_CONFIG || process.env.QLOOD_MAX_WF_CONFIG || 4000);
