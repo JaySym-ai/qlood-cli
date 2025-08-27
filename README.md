@@ -83,7 +83,7 @@ This is a concise, terminal-first guide to using qlood.
   - Note: Running workflows directly from qlood is removed; use `qlood agent` for goal-driven runs.
 
   ```bash
-  /wdupdate 1
+  /wfupdate 1
   ```
   - Reviews and adapts workflow 1 to recent code changes.
 
