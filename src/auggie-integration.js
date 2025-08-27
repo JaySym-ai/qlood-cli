@@ -66,144 +66,7 @@ export class AuggieIntegration {
     }
   }
 
-  /**
-   * Reads a file using Auggie CLI
-   * @param {string} filePath - Path to the file to read
-   * @param {Object} options - Additional options
-   * @returns {Promise<{success: boolean, content?: string, error?: string}>}
-   */
-  async readFile(filePath, options = {}) {
-    try {
-      const prompt = options.prompt || `Read the contents of the file: ${filePath}`;
-      const result = await this._executeAuggieCommand(prompt, {
-        context: `File operation: read ${filePath}`,
-        ...options
-      });
-
-      if (!result.success) {
-        return {
-          success: false,
-          error: result.stderr || 'Failed to read file with Auggie'
-        };
-      }
-
-      return {
-        success: true,
-        content: result.stdout
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: `Error reading file: ${error.message}`
-      };
-    }
-  }
-
-  /**
-   * Writes content to a file using Auggie CLI
-   * @param {string} filePath - Path to the file to write
-   * @param {string} content - Content to write
-   * @param {Object} options - Additional options
-   * @returns {Promise<{success: boolean, message?: string, error?: string}>}
-   */
-  async writeFile(filePath, content, options = {}) {
-    try {
-      const prompt = options.prompt ||
-        `Write the following content to the file ${filePath}:\n\n${content}`;
-
-      const result = await this._executeAuggieCommand(prompt, {
-        context: `File operation: write ${filePath}`,
-        ...options
-      });
-
-      if (!result.success) {
-        return {
-          success: false,
-          error: result.stderr || 'Failed to write file with Auggie'
-        };
-      }
-
-      return {
-        success: true,
-        message: `Successfully wrote content to ${filePath}`
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: `Error writing file: ${error.message}`
-      };
-    }
-  }
-
-  /**
-   * Updates an existing file using Auggie CLI
-   * @param {string} filePath - Path to the file to update
-   * @param {string} instructions - Instructions for how to update the file
-   * @param {Object} options - Additional options
-   * @returns {Promise<{success: boolean, message?: string, error?: string}>}
-   */
-  async updateFile(filePath, instructions, options = {}) {
-    try {
-      const prompt = options.prompt ||
-        `Update the file ${filePath} with the following instructions:\n\n${instructions}`;
-
-      const result = await this._executeAuggieCommand(prompt, {
-        context: `File operation: update ${filePath}`,
-        ...options
-      });
-
-      if (!result.success) {
-        return {
-          success: false,
-          error: result.stderr || 'Failed to update file with Auggie'
-        };
-      }
-
-      return {
-        success: true,
-        message: `Successfully updated ${filePath}`
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: `Error updating file: ${error.message}`
-      };
-    }
-  }
-
-  /**
-   * Gets project context using Auggie CLI
-   * @param {Object} options - Additional options
-   * @returns {Promise<{success: boolean, context?: string, error?: string}>}
-   */
-  async getProjectContext(options = {}) {
-    try {
-      const prompt = options.prompt ||
-        'Analyze the project structure and provide a comprehensive overview of the codebase including main files, dependencies, and project purpose';
-
-      const result = await this._executeAuggieCommand(prompt, {
-        usePrintFormat: true,
-        ...options
-      });
-
-      if (!result.success) {
-        return {
-          success: false,
-          error: result.stderr || 'Failed to get project context with Auggie'
-        };
-      }
-
-      return {
-        success: true,
-        context: result.stdout
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: `Error getting project context: ${error.message}`
-      };
-    }
-  }
+  
 
   /**
    * Executes a custom Auggie command with a specific prompt
@@ -449,7 +312,7 @@ export class AuggieIntegration {
    * @private
    */
   _escapeArg(arg) {
-    if (/[|()\[\]{};'"\\$`<>&*?\s]/.test(arg)) {
+    if (/[|()[\]{};'"\\` $<>&*?\s]/.test(arg)) {
       return `'${arg.replace(/'/g, "'\"'\"'")}'`;
     }
     return arg;
@@ -460,10 +323,7 @@ export class AuggieIntegration {
 const defaultAuggie = new AuggieIntegration();
 
 export const ensureAuggieUpToDate = () => defaultAuggie.ensureAuggieUpToDate();
-export const readFile = (filePath, options) => defaultAuggie.readFile(filePath, options);
-export const writeFile = (filePath, content, options) => defaultAuggie.writeFile(filePath, content, options);
-export const updateFile = (filePath, instructions, options) => defaultAuggie.updateFile(filePath, instructions, options);
-export const getProjectContext = (options) => defaultAuggie.getProjectContext(options);
+
 export const executeCustomPrompt = (prompt, options) => defaultAuggie.executeCustomPrompt(prompt, options);
 export const checkAuthentication = () => defaultAuggie.checkAuthentication();
 export const executeRawCommand = (args, options) => defaultAuggie.executeRawCommand(args, options);

@@ -8,10 +8,7 @@ const counters = {
   auggieCalls: 0,
 };
 
-export function incLLMCalls() {
-  counters.llmCalls += 1;
-  emitter.emit('update', { ...counters });
-}
+
 
 export function incAuggieCalls() {
   counters.auggieCalls += 1;
