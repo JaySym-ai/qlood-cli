@@ -121,9 +121,6 @@ export function detectProjectConfig(cwd = process.cwd()) {
 
 
 
-
-// project-structure.json generation removed; no longer needed
-
 /**
  * Extracts clean markdown content from Auggie's response by removing tool call artifacts
  * @param {string} rawResponse - The raw response from Auggie

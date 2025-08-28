@@ -1,58 +1,15 @@
 import path from 'path';
 import fs from 'fs/promises';
-import { ensureAuggieUpToDate, executeCustomPrompt, checkAuthentication } from '../auggie-integration.js';
+import { ensureAuggieUpToDate, executeCustomPromptStream, checkAuthentication } from '../auggie-integration.js';
 import { getProjectDir, ensureProjectDirs, extractCleanMarkdown } from '../project.js';
 import { buildReviewPrompt } from '../prompts/prompt.review.js';
-
-export function registerReviewCommand(program, { startCliSpinner }) {
-  program
-    .command('review')
-    .description('Run three Auggie reviews and save to ./.qlood/results/review-<datetime>/<category>/review.md')
-    .option('-t, --timeout <ms>', 'Timeout per Auggie call in ms', (v) => parseInt(v, 10))
-    .action(async (cmdOpts) => {
-      const cwd = process.cwd();
-      ensureProjectDirs(cwd);
-
-      const preSpinner = startCliSpinner('Ensuring Auggie is installed and up-to-date...');
-      try {
-        const status = await ensureAuggieUpToDate();
-        if (!status.success) {
-          preSpinner.stop(`Auggie check/update failed: ${status.message}`, false);
-          process.exit(1);
-        }
-        preSpinner.stop(status.message, true);
-      } catch (e) {
-        preSpinner.stop(`Error while ensuring Auggie: ${e.message}`, false);
-        process.exit(1);
-      }
-
-      const authSpinner = startCliSpinner('Verifying Auggie authentication...');
-      try {
-        const auth = await checkAuthentication();
-        if (!auth.success) {
-          authSpinner.stop(`Failed to verify Auggie authentication: ${auth.error || 'Unknown error'}`, false);
-          process.exit(1);
-        }
-        if (!auth.authenticated) {
-          authSpinner.stop('You are not authenticated with Auggie. Run: auggie --login', false);
-          console.log('Tip: You can authenticate by running "auggie --login" once, then re-run this command.');
-          process.exit(1);
-        }
-        authSpinner.stop('Auggie authentication verified', true);
-      } catch (e) {
-        authSpinner.stop(`Error verifying Auggie authentication: ${e.message}`, false);
-        process.exit(1);
-      }
-
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      const baseDir = path.join(getProjectDir(cwd), 'results', `review-${ts}`);
-      await fs.mkdir(baseDir, { recursive: true });
-
-      const categories = [
-        {
-          key: 'repository-supply-chain',
-          title: 'Repository & Supply Chain',
-          checklist: `
+// Export categories so TUI can reuse without duplication
+export function getReviewCategories() {
+  return [
+    {
+      key: 'repository-supply-chain',
+      title: 'Repository & Supply Chain',
+      checklist: `
 - No secrets committed – .env*, keys, certs, DB dumps absent; add to .gitignore. Check history too.
 - Secret patterns scan – Search for API keys/tokens (e.g., sk-, AKIA, -----BEGIN), rotate if found.
 - Lockfiles present & pinned – package-lock.json/yarn.lock/pnpm-lock.yaml committed; no latest/range versions for prod deps.
@@ -66,11 +23,11 @@ export function registerReviewCommand(program, { startCliSpinner }) {
 - Security linting config – semgrep, eslint-plugin-security, or equivalent present and enforced in CI.
 - Dependabot/Snyk config – Automated PRs/scans configured in repo (configuration files present).
 - Git hooks – Optional: Husky/pre-commit to block secrets/console logs; verify hook scripts in repo.`
-        },
-        {
-          key: 'application-code-config',
-          title: 'Application Code & Configuration',
-          checklist: `
+    },
+    {
+      key: 'application-code-config',
+      title: 'Application Code & Configuration',
+      checklist: `
 - Client key exposure – No secrets in client bundles; only public env vars exposed (e.g., NEXT_PUBLIC_*/Vite import.meta.env.* allowlist).
 - Debug code removed – No console.log/warn/error, debug tool inits, or test routes in production builds.
 - CSP & headers set in code – Helmet/middleware/config sets CSP, HSTS, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, frame-ancestors.
@@ -94,11 +51,11 @@ export function registerReviewCommand(program, { startCliSpinner }) {
 - Regex safety – Avoid catastrophic backtracking; use timeouts/safe-regex where needed.
 - GraphQL hardening – Introspection off/gated in prod; depth/complexity limits; resolvers enforce auth/ownership.
 - Framework configs – e.g., Next.js poweredByHeader: false; only intended envs exposed.`
-        },
-        {
-          key: 'build-ci-iac',
-          title: 'Build / CI/CD / Infrastructure-as-Code',
-          checklist: `
+    },
+    {
+      key: 'build-ci-iac',
+      title: 'Build / CI/CD / Infrastructure-as-Code',
+      checklist: `
 - CI secrets handling – No echo $SECRET in logs; secrets only passed to trusted steps; masked in logs.
 - Pinned actions & images – GitHub Actions use version SHAs/tags (not @main/latest); Docker base images pinned.
 - Workflow safety – No unsafe pull_request_target on untrusted paths; least privileges on tokens (permissions: block).
@@ -111,38 +68,91 @@ export function registerReviewCommand(program, { startCliSpinner }) {
 - Infra secrets – Terraform variables/Helm values don’t embed secrets; reference secret manager instead.
 - Build config – Minification/tree-shaking enabled; source maps not uploaded publicly; console stripping configured.
 - SW/Cache rules – Service worker caches versioned; no caching of authenticated API responses.`
-        }
-      ];
+    }
+  ];
+}
 
-      const spinner = startCliSpinner('Running Auggie reviews (3 in parallel)...');
 
+export function registerReviewCommand(program, { startCliSpinner }) {
+  program
+    .command('review')
+    .description('Run three Auggie reviews and save to ./.qlood/results/review-<datetime>/<category>/review.md')
+    .option('-t, --timeout <ms>', 'Timeout per Auggie call in ms', (v) => parseInt(v, 10))
+    .action(async (cmdOpts) => {
+      const cwd = process.cwd();
+      ensureProjectDirs(cwd);
+
+      const preSpinner = startCliSpinner('Ensuring Auggie is installed and up-to-date...');
       try {
-        const tasks = categories.map(async (cat) => {
+        const status = await ensureAuggieUpToDate();
+        if (!status.success) {
+          preSpinner.stop(`Auggie check/update failed: ${status.message}`, false);
+          process.exit(1);
+        }
+        preSpinner.stop(status.message, true);
+      } catch (e) {
+        preSpinner.stop(`Error while ensuring Auggie: ${e.message}`, false);
+        process.exit(1);
+}
+
+
+      const authSpinner = startCliSpinner('Verifying Auggie authentication...');
+      try {
+        const auth = await checkAuthentication();
+        if (!auth.success) {
+          authSpinner.stop(`Failed to verify Auggie authentication: ${auth.error || 'Unknown error'}`, false);
+          process.exit(1);
+        }
+        if (!auth.authenticated) {
+          authSpinner.stop('You are not authenticated with Auggie. Run: auggie --login', false);
+          console.log('Tip: You can authenticate by running "auggie --login" once, then re-run this command.');
+          process.exit(1);
+        }
+        authSpinner.stop('Auggie authentication verified', true);
+      } catch (e) {
+        authSpinner.stop(`Error verifying Auggie authentication: ${e.message}`, false);
+        process.exit(1);
+      }
+
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const baseDir = path.join(getProjectDir(cwd), 'results', `review-${ts}`);
+      await fs.mkdir(baseDir, { recursive: true });
+
+      const categories = getReviewCategories();
+
+      console.log('Running Auggie reviews...');
+      try {
+        const results = [];
+        for (const cat of categories) {
           const catDir = path.join(baseDir, cat.key);
           await fs.mkdir(catDir, { recursive: true });
+          console.log(`\nStarting: ${cat.title}...`);
           const prompt = buildReviewPrompt(cat.title, cat.checklist);
-          const result = await executeCustomPrompt(prompt, { cwd, usePrintFormat: true, timeout: cmdOpts.timeout ?? undefined });
-          let content = result.success ? extractCleanMarkdown(result.stdout) : `# ${cat.title} Review\n\n❌ Failed to run analysis.\n\nError:\n\n${(result.stderr || 'Unknown error')}`;
+          let live = '';
+          const res = await executeCustomPromptStream(prompt, { cwd, usePrintFormat: true, pty: true }, {
+            onStdout: (chunk) => { live += chunk; process.stdout.write(chunk); },
+            onStderr: (chunk) => { process.stderr.write(chunk); }
+          });
+          let content = res.success ? extractCleanMarkdown(res.stdout || live) : `# ${cat.title} Review\n\n❌ Failed to run analysis.\n\nError:\n\n${(res.stderr || 'Unknown error')}`;
           if (!content || content.trim().length < 20) {
-            content = result.stdout || content || '';
+            content = res.stdout || live || content || '';
           }
           const outPath = path.join(catDir, 'review.md');
           await fs.writeFile(outPath, content, 'utf-8');
-          return { title: cat.title, outPath, success: result.success };
-        });
-
-        const results = await Promise.all(tasks);
-        spinner.stop('Reviews completed', true);
+          console.log(`\n\u2713 Completed: ${cat.title}`);
+          console.log(`Saved: ${path.relative(cwd, outPath)}`);
+          results.push({ title: cat.title, outPath, success: res.success });
+        }
         console.log('\nSaved reviews:');
         for (const r of results) {
           console.log(`- ${r.title}: ${path.relative(cwd, r.outPath)}`);
         }
+        console.log('All reviews complete.');
         const allOk = results.every(r => r.success);
         process.exit(allOk ? 0 : 1);
       } catch (error) {
-        spinner.stop(`Error during reviews: ${error.message}`, false);
+        console.error(`Error during reviews: ${error.message}`);
         process.exit(1);
       }
     });
 }
-

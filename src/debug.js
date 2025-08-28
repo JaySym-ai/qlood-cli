@@ -335,12 +335,6 @@ process.on('exit', () => {
   debugLogger.disable();
 });
 
-process.on('SIGINT', () => {
-  debugLogger.disable();
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  debugLogger.disable();
-  process.exit(0);
-});
+// Avoid installing SIGINT/SIGTERM handlers here because any listener
+// prevents Node's default behavior of exiting on Ctrl+C. Let callers
+// (like the TUI) manage signals and rely on 'exit' for cleanup.

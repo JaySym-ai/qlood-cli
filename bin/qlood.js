@@ -29,11 +29,21 @@ dotenv.config();
 
 const program = new Command();
 
-// SIGINT: exit immediately
-process.on('SIGINT', () => {
-  console.log('Exiting.');
-  process.exit(130);
-});
+// Ensure Auggie is installed and up to date at startup
+try {
+  console.log('Checking Auggie CLI status...');
+  const result = await ensureAuggieUpToDate();
+  if (result.success) {
+    console.log(`✓ Auggie ready${result.version ? ` (v${result.version})` : ''}`);
+  } else {
+    console.warn(`⚠️  Auggie check failed: ${result.message}`);
+  }
+} catch (e) {
+  console.warn(`⚠️  Auggie check error: ${e?.message || e}`);
+}
+
+// Do not set a global SIGINT handler here to allow
+// context-specific handling (e.g., TUI double-press behavior).
 
 // Load defaults from config if present
 

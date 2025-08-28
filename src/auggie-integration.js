@@ -455,8 +455,9 @@ export class AuggieIntegration {
    * @private
    */
   _escapeArg(arg) {
-    if (/[|()[\]{};'"\\` $<>&*?\s]/.test(arg)) {
-      return `'${arg.replace(/'/g, "'\"'\"'")}'`;
+    if (/[|()[\{};'"\\` $<>&*?\s]/.test(arg)) {
+      const escaped = String(arg).replace(/'/g, "'\\''");
+      return "'" + escaped + "'";
     }
     return arg;
   }
@@ -488,9 +489,5 @@ export const executeCustomPrompt = (prompt, options) => defaultAuggie.executeCus
 export const executeCustomPromptStream = (prompt, options, handlers) => defaultAuggie.executeCustomPromptStream(prompt, options, handlers);
 export const checkAuthentication = () => defaultAuggie.checkAuthentication();
 export const executeRawCommand = (args, options) => defaultAuggie.executeRawCommand(args, options);
-export const executeRawCommandStream = (args, options, handlers) => defaultAuggie.executeRawCommandStream(args, options, handlers);
 export const cancelActiveAuggie = (opts) => defaultAuggie.cancelActiveAuggie(opts);
 export const hasActiveAuggie = () => defaultAuggie.hasActiveAuggie();
-
-// Export the class as default
-export default AuggieIntegration;

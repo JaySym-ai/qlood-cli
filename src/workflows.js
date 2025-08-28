@@ -212,7 +212,7 @@ function ensureResultsBase(cwd = process.cwd()) {
 }
 
 function createResultStructure(wfId, cwd = process.cwd()) {
-  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const ts = new Date().toISOString().replace(/[:.]/g, '-') ;
   const base = ensureResultsBase(cwd);
   const dir = path.join(base, `wf${wfId}-${ts}`);
   const success = path.join(dir, 'success');
@@ -226,23 +226,6 @@ function createResultStructure(wfId, cwd = process.cwd()) {
   fs.writeFileSync(path.join(error, 'fix-prompt.md'), fix);
   return { dir, success, warning, error };
 }
-
-function copyIfExists(src, dest) {
-  try { if (fs.existsSync(src)) fs.copyFileSync(src, dest); } catch {}
-}
-
-
-
-function readContains(p, substr) {
-  try {
-    if (!fs.existsSync(p)) return false;
-    const txt = fs.readFileSync(p, 'utf8');
-    return txt.includes(substr);
-  } catch {
-    return false;
-  }
-}
-
 
 
 export async function runWorkflow(id, { cwd = process.cwd(), streamHandlers = null } = {}) {
@@ -270,7 +253,12 @@ Instructions:
 - Read the workflow steps and follow them precisely with Playwright.
 - Use headless browser.
 - If a base URL is needed, use: ${baseUrl || '(no base URL provided; infer from the workflow)'}
-- Log each major step and assertion to stdout as you run.
+- Stream concise progress logs to stdout in near real-time (flush frequently). Use the following markers on their own lines to structure output:
+  - 📋 Step: <short step title>
+  - 🔧 Action: <what you are doing>
+  - ✅/⚠️/❌ Result: <brief result>
+  - ---- as a boundary between steps
+- Keep lines short; avoid ANSI color codes.
 - Save a final Markdown run report to "${relResultsDir}/success/report.md" describing what was done and key outcomes.
 - If you encounter issues, still write a report and clearly mark failures; you may also write additional notes to "${relResultsDir}/warning/report.md".
 - Do not ask for confirmation. Execute autonomously.`;

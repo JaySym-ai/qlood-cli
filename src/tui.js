@@ -9,6 +9,7 @@ import { checkAuthentication, executeCustomPromptStream, cancelActiveAuggie, has
 import { addWorkflow, updateWorkflow, deleteWorkflow, listWorkflows, runWorkflow } from './workflows.js';
 
 import { buildRefactorPrompt } from './prompts/prompt.refactor.js';
+import { getReviewCategories } from './commands/review.js';
 import { getMetrics, onMetricsUpdate } from './metrics.js';
 export async function runTui() {
   // Auto-enable debug logging for this session
@@ -174,6 +175,26 @@ export async function runTui() {
     setStreamSpinner(false);
     if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
   }
+
+  // Standard Auggie stream handlers used across all commands
+  function makeAuggieStreamHandlers() {
+    return {
+      onStdout: (chunk) => {
+        lastStreamChunkAt = Date.now();
+        const text = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, '');
+        if (text.trim().length === 0) return;
+        streamLog(text + "\n");
+        scheduleRender();
+      },
+      onStderr: (chunk) => {
+        lastStreamChunkAt = Date.now();
+        const text = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, '');
+        if (text.trim().length === 0) return;
+        streamLog(`{yellow-fg}${text}{/}\n`);
+        scheduleRender();
+      }
+    };
+  }
   // Status bar spinner controller (top-level)
   // Rendering scheduler to reduce flicker
   let renderTimer = null;
@@ -186,45 +207,7 @@ export async function runTui() {
   }
 
   // Bounded live stream into the log: keep only the last N lines of stream
-  const STREAM_MAX_LINES = Number(process.env.QLOOD_STREAM_MAX_LINES || 200);
-  function boundedStreamAppend(text) {
-    const content = log.getContent();
-    const parts = content.split('\n');
-    // Find the last non-stream marker; we treat everything after the last "Starting:" as stream for simplicity
-    let splitIdx = parts.lastIndexOf('{cyan-fg}Starting:');
-    if (splitIdx === -1) splitIdx = parts.length; // no starting marker, append at end
-
-    // Existing stream tail
-    const head = parts.slice(0, splitIdx + 1);
-    const tail = parts.slice(splitIdx + 1);
-
-    // New stream lines
-    const newLines = String(text || '').split('\n');
-    const combined = [...tail, ...newLines].filter(Boolean);
-
-    // Trim to last STREAM_MAX_LINES
-    const trimmedTail = combined.slice(-STREAM_MAX_LINES);
-
-    const next = [...head, ...trimmedTail].join('\n');
-    log.setContent(next);
-  }
-
-
-  // Bounded live stream into the log: keep only the last N lines of stream (top-level, correct scope)
-  function boundedStreamAppendTop(text) {
-    const max = Number(process.env.QLOOD_STREAM_MAX_LINES || 200);
-    const content = log.getContent();
-    const parts = content.split('\n');
-    // Treat everything after the last "Starting:" line as the live stream tail
-    let splitIdx = parts.lastIndexOf('{cyan-fg}Starting:');
-    if (splitIdx === -1) splitIdx = parts.length;
-    const head = parts.slice(0, splitIdx + 1);
-    const tail = parts.slice(splitIdx + 1);
-    const newLines = String(text || '').split('\n');
-    const combined = [...tail, ...newLines].filter(Boolean);
-    const trimmedTail = combined.slice(-max);
-    log.setContent([...head, ...trimmedTail].join('\n'));
-  }
+  
 
   // Throttled stream logging buffer
   let streamBuffer = '';
@@ -268,7 +251,13 @@ export async function runTui() {
     for (const raw of lines) {
       const l = raw;
       const t = l.trim();
-      const isBoundary = t === '' || /^[🔧📋]/.test(t) || /^-{2,}$/.test(t);
+      // Treat step/action/result markers and separators as boundaries
+      const isBoundary = (
+        t === '' ||
+        /^([📋🔧✅⚠️❌])\b/.test(t) ||
+        /^(Step|Action|Result)\s*:/.test(t) ||
+        /^-{2,}$/.test(t)
+      );
       if (isBoundary) {
         if (acc) { out.push(acc); acc = ''; }
         out.push(l);
@@ -525,32 +514,6 @@ export async function runTui() {
     if (!expectingInitConfirm) return;
     input.clearValue();
     if (expectingInitConfirm) {
-  // Normalize streamed chunks to reduce choppy wrapping
-  function normalizeChunk(chunk) {
-    const text = String(chunk || '').replace(/\r/g, '');
-    const lines = text.split('\n');
-    const out = [];
-    let acc = '';
-    for (const raw of lines) {
-      const l = raw;
-      const t = l.trim();
-      const isBoundary = t === '' || /^[🔧📋]/.test(t) || /^-{2,}$/.test(t);
-      if (isBoundary) {
-        if (acc) { out.push(acc); acc = ''; }
-        out.push(l);
-        continue;
-      }
-      if (t.length <= 3) {
-        acc += (acc ? ' ' : '') + t;
-      } else {
-        if (acc) { out.push(acc); acc = ''; }
-        out.push(l);
-      }
-    }
-    if (acc) out.push(acc);
-    return out.join('\n');
-  }
-
       addLog('{red-fg}Initialization declined. Exiting QLOOD-CLI...{/}');
       showToast('Initialization declined', 'warn');
       setTimeout(() => { teardownAndExit(0); }, 300);
@@ -597,10 +560,11 @@ export async function runTui() {
   const history = [];
   let histIndex = -1;
 
-  // Local browser lifecycle removed; ensureChromeReady is a no-op
-  async function ensureChromeReady() { return; }
+  
 
   async function handle(line) {
+    // Any user action resets idle Ctrl+C arming
+    ctrlCArmedToExit = false;
     const cmd = (line || '').trim();
     if (!cmd) return;
     history.push(cmd);
@@ -703,28 +667,14 @@ export async function runTui() {
           showToast('Login required', 'error');
           return;
         }
-        addLog('{cyan-fg}Starting: Creating workflow with Auggie...{/}');
+        addLog('{cyan-fg}Starting: Create workflow...{/}');
         startStream();
         try {
-          const streamHandlers = {
-            onStdout: (chunk) => {
-              lastStreamChunkAt = Date.now();
-              const text = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, '');
-              if (text.trim().length === 0) return;
-              streamLog(text + "\n");
-              scheduleRender();
-            },
-            onStderr: (chunk) => {
-              lastStreamChunkAt = Date.now();
-              const text = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, '');
-              if (text.trim().length === 0) return;
-              streamLog(`{yellow-fg}${text}{/}\n`);
-              scheduleRender();
-            }
-          };
+          const streamHandlers = makeAuggieStreamHandlers();
           const { id, file } = await addWorkflow(desc, { streamHandlers });
           stopStream();
-          addLog(`{green-fg}Workflow created{/}: ${file} (id: ${id})`);
+          addLog(`{green-fg}✓ Completed:{/} Create workflow`);
+          addLog(`Saved: ${file} (id: ${id})`);
         } catch (e) {
           stopStream();
           stopLoadingAnimation(`wfadd error: ${e?.message || e}`, false);
@@ -749,28 +699,18 @@ export async function runTui() {
           showToast('Login required', 'error');
           return;
         }
-        addLog('{cyan-fg}Starting: Updating workflow with Auggie...{/}');
+        addLog('{cyan-fg}Starting: Update workflow...{/}');
         startStream();
         try {
-          const streamHandlers = {
-            onStdout: (chunk) => {
-              lastStreamChunkAt = Date.now();
-              const text = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, '');
-              if (text.trim().length === 0) return;
-              streamLog(text + "\n");
-              scheduleRender();
-            },
-            onStderr: (chunk) => {
-              lastStreamChunkAt = Date.now();
-              const text = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, '');
-              if (text.trim().length === 0) return;
-              streamLog(`{yellow-fg}${text}{/}\n`);
-              scheduleRender();
-            }
-          };
+          const streamHandlers = makeAuggieStreamHandlers();
           const res = await updateWorkflow(id, { streamHandlers });
           stopStream();
-          addLog(res.updated ? `{green-fg}Workflow updated{/}: ${res.file}` : `{yellow-fg}No changes applied{/}: ${res.file}`);
+          if (res.updated) {
+            addLog(`{green-fg}✓ Completed:{/} Update workflow`);
+          } else {
+            addLog(`{yellow-fg}No changes applied{/}`);
+          }
+          addLog(`Saved: ${res.file}`);
         } catch (e) {
           stopStream();
           stopLoadingAnimation(`wfupdate error: ${e?.message || e}`, false);
@@ -812,32 +752,19 @@ export async function runTui() {
           showToast('Login required', 'error');
           return;
         }
-        addLog(`{cyan-fg}Starting: Running workflow ${id} with Auggie...{/}`);
+        addLog(`{cyan-fg}Starting: Run workflow ${id}...{/}`);
         startStream();
         try {
-          const streamHandlers = {
-            onStdout: (chunk) => {
-              lastStreamChunkAt = Date.now();
-              const text = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, '');
-              if (text.trim().length === 0) return;
-              streamLog(text + "\n");
-              scheduleRender();
-            },
-            onStderr: (chunk) => {
-              lastStreamChunkAt = Date.now();
-              const text = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, '');
-              if (text.trim().length === 0) return;
-              streamLog(`{yellow-fg}${text}{/}\n`);
-              scheduleRender();
-            }
-          };
+          const streamHandlers = makeAuggieStreamHandlers();
           const res = await runWorkflow(id, { streamHandlers });
           stopStream();
           if (res.success) {
-            addLog(`{green-fg}Workflow ${id} completed{/}. Results: ${res.resultsDir}`);
+            addLog(`{green-fg}✓ Completed:{/} Run workflow ${id}`);
+            addLog(`Results: ${res.resultsDir}`);
             showToast('Workflow complete', 'success');
           } else {
-            addLog(`{red-fg}Workflow ${id} failed{/}. See results: ${res.resultsDir}`);
+            addLog(`{red-fg}✗ Failed:{/} Run workflow ${id}`);
+            addLog(`Results: ${res.resultsDir}`);
             showToast('Workflow failed', 'error');
           }
         } catch (e) {
@@ -875,6 +802,7 @@ export async function runTui() {
         addLog('  {cyan-fg}/wfls{/} - List all available workflows');
         addLog('  {cyan-fg}/wfupdate <id>{/} - Update workflow to match code changes');
         addLog('  {cyan-fg}/wfdel <id>{/} - Delete a workflow');
+        addLog('  {cyan-fg}/review{/} - Run three security/code reviews and save results');
         addLog('  {cyan-fg}/refactor{/} - Analyze repo and save a refactor plan under ./.qlood/results');
         addLog('  {cyan-fg}/clean{/} - Delete all files under ./.qlood/debug and ./.qlood/results');
         addLog('  {cyan-fg}/quit{/} - Exit QLOOD-CLI');
@@ -902,6 +830,56 @@ export async function runTui() {
       } else if (cmd === '/context' || cmd.startsWith('/context ')) {
         addLog('{yellow-fg}Context management is now handled internally by Auggie. This command is deprecated.{/}');
         showToast('Context command removed', 'warn');
+      } else if (cmd === '/review') {
+        const authResult = await checkAuthentication();
+        if (!authResult.success || !authResult.authenticated) {
+          addLog('{red-fg}❌ Authentication required to run reviews.{/}');
+          addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
+          showToast('Login required', 'error');
+          return;
+        }
+        addLog('{cyan-fg}Starting: Repository reviews with Auggie...{/}');
+        startStream();
+        const cwd = process.cwd();
+        try {
+          ensureProjectDirs(cwd);
+          const ts = new Date().toISOString().replace(/[:.]/g, '-');
+          const baseDir = path.join(getProjectDir(cwd), 'results', `review-${ts}`);
+          fs.mkdirSync(baseDir, { recursive: true });
+          const categories = getReviewCategories();
+          const saved = [];
+          for (const cat of categories) {
+            addLog(`{cyan-fg}Starting: ${cat.title}...{/}`);
+            const catDir = path.join(baseDir, cat.key);
+            fs.mkdirSync(catDir, { recursive: true });
+            const prompt = buildReviewPrompt(cat.title, cat.checklist);
+            let liveBuf = '';
+            const handlers = makeAuggieStreamHandlers();
+            const result = await executeCustomPromptStream(prompt, { cwd, usePrintFormat: true, pty: true }, {
+              onStdout: (chunk) => { liveBuf += chunk; try { handlers.onStdout(chunk); } catch {} },
+              onStderr: (chunk) => { try { handlers.onStderr(chunk); } catch {} }
+            });
+            let content = result.success ? extractCleanMarkdown(result.stdout || liveBuf) : `# ${cat.title} Review\n\n❌ Failed to run analysis.\n\n${(result.stderr || 'Unknown error')}`;
+            if (!content || content.trim().length < 20) {
+              content = (result.stdout || liveBuf || content || '');
+            }
+            const outPath = path.join(catDir, 'review.md');
+            fs.writeFileSync(outPath, content, 'utf-8');
+            const rel = path.relative(cwd, outPath);
+            addLog(`{green-fg}✓ Completed:{/} ${cat.title}`);
+            addLog(`Saved: ${rel}`);
+            saved.push({ title: cat.title, path: rel });
+          }
+          stopStream();
+          addLog('');
+          addLog('{bold}All reviews saved:{/}');
+          for (const s of saved) addLog(`- ${s.title}: ${s.path}`);
+          showToast('Reviews complete', 'success');
+        } catch (e) {
+          stopStream();
+          addLog(`{red-fg}review error:{/} ${e?.message || e}`);
+          showToast('Review failed', 'error');
+        }
       } else if (cmd === '/refactor') {
         const authResult = await checkAuthentication();
         if (!authResult.success || !authResult.authenticated) {
@@ -910,27 +888,17 @@ export async function runTui() {
           showToast('Login required', 'error');
           return;
         }
-        addLog('{cyan-fg}Starting: Scanning repository for refactoring opportunities...{/}');
-        setStreamSpinner(true);
+        addLog('{cyan-fg}Starting: Refactor analysis...{/}');
+        startStream();
         const cwd = process.cwd();
         try {
           ensureProjectDirs(cwd);
           const prompt = buildRefactorPrompt();
           let liveBuf = '';
-          const result = await executeCustomPromptStream(prompt, { cwd, usePrintFormat: true }, {
-            onStdout: (chunk) => {
-              liveBuf += chunk;
-              const text = String(chunk).replace(/\r/g, '');
-              if (text.trim().length === 0) return;
-              streamLog(text + "\n");
-              scheduleRender();
-            },
-            onStderr: (chunk) => {
-              const text = String(chunk).replace(/\r/g, '');
-              if (text.trim().length === 0) return;
-              streamLog(`{yellow-fg}${text}{/}\n`);
-              scheduleRender();
-            }
+          const handlers = makeAuggieStreamHandlers();
+          const result = await executeCustomPromptStream(prompt, { cwd, usePrintFormat: true, pty: true }, {
+            onStdout: (chunk) => { liveBuf += chunk; try { handlers.onStdout(chunk); } catch {} },
+            onStderr: (chunk) => { try { handlers.onStderr(chunk); } catch {} }
           });
           let content = result.success ? extractCleanMarkdown(result.stdout || liveBuf) : '';
           if (!content || content.trim().length < 50) {
@@ -941,11 +909,12 @@ export async function runTui() {
           fs.mkdirSync(baseDir, { recursive: true });
           const outPath = path.join(baseDir, 'refactor.md');
           fs.writeFileSync(outPath, content, 'utf-8');
-          setStreamSpinner(false);
-          addLog(`Saved refactor plan: ${path.relative(cwd, outPath)}`);
+          stopStream();
+          addLog(`{green-fg}✓ Completed:{/} Refactor analysis`);
+          addLog(`Saved: ${path.relative(cwd, outPath)}`);
           showToast('Refactor plan saved', 'success');
         } catch (e) {
-          setStreamSpinner(false);
+          stopStream();
           addLog(`{red-fg}refactor error:{/} ${e?.message || e}`);
           showToast('Refactor failed', 'error');
         }
@@ -1011,11 +980,14 @@ export async function runTui() {
     screen.render();
   });
 
-  // Ctrl+C behavior: cancel/kill active Auggie first; double-press to force, exit if idle
+  // Ctrl+C behavior
+  // - If Auggie is running: first press sends SIGINT; second (quick) press force-kills.
+  // - If idle: first press shows hint; second (quick) press exits QLOOD-CLI.
   let lastCtrlC = 0;
-  screen.key(['C-c'], async () => {
+  let ctrlCArmedToExit = false; // idle case: second press exits
+  function handleCtrlC() {
     const now = Date.now();
-    const withinDouble = (now - lastCtrlC) < 1000;
+    const withinDouble = (now - lastCtrlC) < 1000; // double-press window for force-kill
     lastCtrlC = now;
 
     // If a stream/refactor is running, try to interrupt it gracefully
@@ -1026,25 +998,32 @@ export async function runTui() {
         setStreamSpinner(false);
       } else {
         cancelActiveAuggie({ force: false });
-        addLog('{yellow-fg}Sent SIGINT to Auggie (press Ctrl+C again quickly to force kill).{/}');
+        addLog('{yellow-fg}Sent SIGINT to Auggie. Press Ctrl+C again quickly to force kill.{/}');
       }
-      return; // Do not exit TUI on first Ctrl+C when something is running
+      return; // Do not exit TUI on Ctrl+C while something is running
     }
 
-    // Nothing running: exit the TUI
+    // Nothing running
+    if (!ctrlCArmedToExit) {
+      ctrlCArmedToExit = true;
+      addLog('{yellow-fg}Press Ctrl+C again to close QLOOD-CLI.{/}');
+      showToast('Press Ctrl+C again to quit', 'warn', 2200);
+      renderStatus();
+      scheduleRender();
+      return;
+    }
+
+    // Second press (armed): exit the TUI
     if (spinnerTimer) clearInterval(spinnerTimer);
     if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
     teardownAndExit(0);
-  });
+  }
 
-  // Also catch SIGINT directly (mac terminals may deliver SIGINT instead of key binding)
-  process.on('SIGINT', async () => {
-    hideWorking();
+  // Blessed key binding
+  screen.key(['C-c'], handleCtrlC);
 
-    if (spinnerTimer) clearInterval(spinnerTimer);
-    if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
-    teardownAndExit(0);
-  });
+  // Also catch SIGINT directly (some terminals deliver SIGINT instead of key binding)
+  process.on('SIGINT', handleCtrlC);
 
   // 'q' to quit directly
   screen.key(['q'], () => {
