@@ -294,7 +294,11 @@ export async function runTui() {
 
   // Normalize streamed chunks to reduce choppy wrapping (top-level)
   function normalizeChunk(chunk) {
-    const text = String(chunk || '').replace(/\r/g, '');
+    // Strip carriage returns and non-printable control chars except tab/newline.
+    // This avoids showing artifacts like "^D" (EOT, \x04) from PTY wrappers.
+    const text = String(chunk || '')
+      .replace(/\r/g, '')
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
     const lines = text.split('\n');
     const out = [];
     let acc = '';
@@ -321,7 +325,18 @@ export async function runTui() {
       }
     }
     if (acc) out.push(acc);
-    return out.join('\n');
+    // Join, then drop common PTY artifact lines like literal "^D" or "^C" on their own line
+    let joined = out.join('\n');
+    joined = joined
+      .split('\n')
+      .filter((l) => {
+        const t = l.trim();
+        if (t === '^D' || t === '^C') return false; // caret-coded EOT/INT artifacts
+        if (/^script:.*(done|exiting)/i.test(t)) return false; // extra script messages (defensive)
+        return true;
+      })
+      .join('\n');
+    return joined;
   }
 
 
