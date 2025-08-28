@@ -3,9 +3,9 @@
 > Supercharge your website and app testing with next‑generation AI automation.
 > QLOOD‑CLI is a preconfigured wrapper around the AugmentCode (Auggie) CLI that thinks like a user, tests like a pro, and catches what humans miss.
 
-[AI] AI_SUPERPOWER — intelligent, context‑aware testing
-[⚡] LIGHTNING_FAST — built for CI/CD and rapid iteration
-[✓] BULLETPROOF — comprehensive analysis to keep your app production‑ready
+Links:
+- AugmentCode: https://augmentcode.com
+- Auggie automation docs: https://docs.augmentcode.com/cli/automation
 
 ---
 
