@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { ensureProjectDirs, getProjectDir, loadProjectConfig } from './project.js';
+import { ensureProjectDirs, getProjectDir, loadProjectConfig, extractCleanMarkdown } from './project.js';
 import { executeCustomPrompt, executeCustomPromptStream, checkAuthentication } from './auggie-integration.js';
+import { runAuggieStream } from './auggie-stream.js';
 import { debugLogger } from './debug.js';
 
 import { buildWorkflowPrompt } from './prompts/prompt.workflow.js';
@@ -113,16 +114,19 @@ export async function addWorkflow(description, { cwd = process.cwd(), streamHand
   const outDir = getWorkflowsDir(cwd);
   const outPath = path.join(outDir, file);
 
-  // Compose workflow prompt and instruct Auggie to write the file itself
-  const basePrompt = buildWorkflowPrompt(description, cwd);
-  const relOutPath = path.relative(cwd, outPath);
-  const writeInstruction = `\n\nACTION:\n- Write the full Markdown workflow to \"${relOutPath}\" (overwrite if it exists)\n- Use UTF-8 encoding\n- Do not ask for confirmation`;
-  const prompt = `${basePrompt}${writeInstruction}`;
+  // Compose workflow prompt; we will write the file locally for consistent handling
+  const prompt = buildWorkflowPrompt(description, cwd);
 
   if (streamHandlers) {
-    await executeCustomPromptStream(prompt, { usePrintFormat: false, pty: true }, streamHandlers);
+    const { success, cleaned } = await runAuggieStream(prompt, { cwd }, streamHandlers);
+    if (success && cleaned && cleaned.length > 20) {
+      try { fs.writeFileSync(outPath, cleaned, 'utf-8'); } catch {}
+    }
   } else {
-    await executeCustomPrompt(prompt, { usePrintFormat: true });
+    const { success, cleaned } = await runAuggieStream(prompt, { cwd });
+    if (success && cleaned && cleaned.length > 20) {
+      try { fs.writeFileSync(outPath, cleaned, 'utf-8'); } catch {}
+    }
   }
 
   // Verify file was created by Auggie; minimal fallback if not
@@ -176,19 +180,19 @@ ${prev}`;
 
   let stdout = '';
   if (streamHandlers) {
-    const res = await executeCustomPromptStream(finalPrompt, { usePrintFormat: false, pty: true }, {
+    const { success, cleaned } = await runAuggieStream(finalPrompt, { cwd }, {
       onStdout: (chunk) => { stdout += chunk; try { streamHandlers.onStdout?.(chunk); } catch {} },
       onStderr: (chunk) => { try { streamHandlers.onStderr?.(chunk); } catch {} }
     });
-    const next = extractCleanMarkdown((res.success ? (res.stdout || stdout) : '').trim());
+    const next = (success ? cleaned : '').trim();
     if (next && next.length > 20) {
       fs.writeFileSync(p, next);
       return { file: wf.file, updated: true };
     }
     return { file: wf.file, updated: false };
   } else {
-    const res = await executeCustomPrompt(finalPrompt, { usePrintFormat: true });
-    const next = extractCleanMarkdown((res.success ? res.stdout : '').trim());
+    const { success, cleaned } = await runAuggieStream(finalPrompt, { cwd });
+    const next = (success ? cleaned : '').trim();
     if (next && next.length > 20) {
       fs.writeFileSync(p, next);
       return { file: wf.file, updated: true };

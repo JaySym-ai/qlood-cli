@@ -4,6 +4,7 @@ import path from 'path';
 import { setMainPrompt, setSystemInstructions } from './config.js';
 import { debugLogger } from './debug.js';
 import { ensureProjectInit, loadProjectConfig, getProjectDir, ensureProjectDirs, extractCleanMarkdown } from './project.js';
+import { runAuggieStream } from './auggie-stream.js';
 import { checkAuthentication, executeCustomPromptStream, cancelActiveAuggie, hasActiveAuggie } from './auggie-integration.js';
 
 import { addWorkflow, updateWorkflow, deleteWorkflow, listWorkflows, runWorkflow } from './workflows.js';
@@ -872,15 +873,11 @@ export async function runTui() {
             const catDir = path.join(baseDir, cat.key);
             fs.mkdirSync(catDir, { recursive: true });
             const prompt = buildReviewPrompt(cat.title, cat.checklist);
-            let liveBuf = '';
             const handlers = makeAuggieStreamHandlers();
-            const result = await executeCustomPromptStream(prompt, { cwd, usePrintFormat: true, pty: true }, {
-              onStdout: (chunk) => { liveBuf += chunk; try { handlers.onStdout(chunk); } catch {} },
-              onStderr: (chunk) => { try { handlers.onStderr(chunk); } catch {} }
-            });
-            let content = result.success ? extractCleanMarkdown(result.stdout || liveBuf) : `# ${cat.title} Review\n\n❌ Failed to run analysis.\n\n${(result.stderr || 'Unknown error')}`;
+            const { success, stdout } = await runAuggieStream(prompt, { cwd }, handlers);
+            let content = success ? extractCleanMarkdown(stdout) : `# ${cat.title} Review\n\n❌ Failed to run analysis.\n\nUnknown error`;
             if (!content || content.trim().length < 20) {
-              content = (result.stdout || liveBuf || content || '');
+              content = (stdout || content || '');
             }
             const outPath = path.join(catDir, 'review.md');
             fs.writeFileSync(outPath, content, 'utf-8');
@@ -913,15 +910,11 @@ export async function runTui() {
         try {
           ensureProjectDirs(cwd);
           const prompt = buildRefactorPrompt();
-          let liveBuf = '';
           const handlers = makeAuggieStreamHandlers();
-          const result = await executeCustomPromptStream(prompt, { cwd, usePrintFormat: true, pty: true }, {
-            onStdout: (chunk) => { liveBuf += chunk; try { handlers.onStdout(chunk); } catch {} },
-            onStderr: (chunk) => { try { handlers.onStderr(chunk); } catch {} }
-          });
-          let content = result.success ? extractCleanMarkdown(result.stdout || liveBuf) : '';
+          const { success, stdout } = await runAuggieStream(prompt, { cwd }, handlers);
+          let content = success ? extractCleanMarkdown(stdout) : '';
           if (!content || content.trim().length < 50) {
-            content = (result.stdout || liveBuf || '# Refactor Plan\n\nNo results.');
+            content = (stdout || '# Refactor Plan\n\nNo results.');
           }
           const ts = new Date().toISOString().replace(/[:.]/g, '-');
           const baseDir = path.join(getProjectDir(cwd), 'results', `refactor-${ts}`);
