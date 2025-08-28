@@ -4,6 +4,7 @@
 > QLOOD‑CLI is a preconfigured wrapper around the AugmentCode (Auggie) CLI that thinks like a user, tests like a pro, and catches what humans miss.
 
 Links:
+- Qlood: https://qlood.com
 - AugmentCode: https://augmentcode.com
 - Auggie automation docs: https://docs.augmentcode.com/cli/automation
 
