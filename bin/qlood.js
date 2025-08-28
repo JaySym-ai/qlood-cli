@@ -19,6 +19,7 @@ import { ensureAuggieUpToDate, executeRawCommand } from '../src/auggie-integrati
 import { getProjectDir, ensureProjectInit } from '../src/project.js';
 import fs from 'fs/promises';
 import { registerReviewCommand } from '../src/commands/review.js';
+import { registerCleanCommand } from '../src/commands/clean.js';
 
 import { startCliSpinner } from '../src/cli/spinner.js';
 import { checkAndAutoUpdate as checkAndAutoUpdateUtil } from '../src/cli/update.js';
