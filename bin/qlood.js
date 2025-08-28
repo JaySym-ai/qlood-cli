@@ -67,8 +67,8 @@ program
     const goal = Array.isArray(goalParts) ? goalParts.join(' ') : String(goalParts);
     // Ensure project is initialized and MCP config exists
     await ensureProjectInit();
-    // Delegate to Auggie CLI with required flags (--mcp-config, --compact, --print)
-    const result = await executeRawCommand(['--mcp-config', '.qlood/mcp-config.json', '--compact', '--print', goal], { cwd: process.cwd() });
+    // Delegate to Auggie CLI with required flags (--mcp-config, --print)
+    const result = await executeRawCommand(['--mcp-config', '.qlood/mcp-config.json', '--print', goal], { cwd: process.cwd() });
     if (!result.success) {
       console.error('Auggie error:', result.stderr || 'Unknown error');
       process.exit(1);

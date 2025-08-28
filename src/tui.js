@@ -9,6 +9,8 @@ import { checkAuthentication, executeCustomPromptStream, cancelActiveAuggie, has
 import { addWorkflow, updateWorkflow, deleteWorkflow, listWorkflows, runWorkflow } from './workflows.js';
 
 import { buildRefactorPrompt } from './prompts/prompt.refactor.js';
+import { buildReviewPrompt } from './prompts/prompt.review.js';
+
 import { getReviewCategories } from './commands/review.js';
 import { getMetrics, onMetricsUpdate } from './metrics.js';
 export async function runTui() {
@@ -53,6 +55,7 @@ export async function runTui() {
     border: { type: 'line' },
     scrollable: true,
     alwaysScroll: true,
+    scrollOnInput: true,
     scrollbar: {
       ch: ' ',
       track: { bg: theme.bg },
@@ -218,15 +221,23 @@ export async function runTui() {
         if (line === '') continue;
         log.add(line);
       }
-      // Trim total content if it grows too large
-      const get = typeof log.getContent === 'function' ? log.getContent.bind(log) : () => (log.content || '');
-      const set = typeof log.setContent === 'function' ? log.setContent.bind(log) : (v) => { log.content = v; };
-      const content = get();
-      const lines = content.split('\n');
-      if (lines.length > MAX_TOTAL_LOG_LINES) {
-        const trimmed = lines.slice(lines.length - MAX_TOTAL_LOG_LINES).join('\n');
-        set(trimmed);
-      }
+      // Trim total content if it grows too large, without rewriting entire content
+      try {
+        const getLinesFn = typeof log.getLines === 'function' ? log.getLines.bind(log) : null;
+        let totalLines = 0;
+        if (getLinesFn) {
+          totalLines = getLinesFn().length;
+        } else {
+          const get = typeof log.getContent === 'function' ? log.getContent.bind(log) : () => (log.content || '');
+          totalLines = String(get() || '').split('\n').length;
+        }
+        if (totalLines > MAX_TOTAL_LOG_LINES) {
+          const toDelete = totalLines - MAX_TOTAL_LOG_LINES;
+          for (let i = 0; i < toDelete; i++) {
+            try { if (typeof log.deleteTop === 'function') log.deleteTop(); } catch {}
+          }
+        }
+      } catch {}
       // Stick to bottom reliably, even if other timers render concurrently
       try {
         if (typeof log.getScrollHeight === 'function' && typeof log.setScroll === 'function') {
@@ -258,6 +269,8 @@ export async function runTui() {
     if (streamFlushTimer) { clearTimeout(streamFlushTimer); streamFlushTimer = null; }
     if (!streamBuffer) return;
     boundedStreamAppendTop(streamBuffer.trimEnd());
+    // Coalesce renders after flushing
+    try { scheduleRender(); } catch {}
     streamBuffer = '';
   }
 
@@ -357,9 +370,9 @@ export async function runTui() {
       shadow: true,
     });
     screen.append(toastBox);
-    screen.render();
+    scheduleRender();
     toastTimer = setTimeout(() => {
-      if (toastBox) { screen.remove(toastBox); toastBox = null; screen.render(); }
+      if (toastBox) { screen.remove(toastBox); toastBox = null; scheduleRender(); }
     }, duration);
   }
 
@@ -397,7 +410,7 @@ export async function runTui() {
         if (workingLogLine) workingLogLine.setContent(`{${theme.accent}-fg}${spinnerFrames[spinnerIndex]}{/} {dim}Working...{/}`);
         if (spinnerIndex % 4 === 0) { dotCount = dotCount >= 3 ? 0 : dotCount + 1; log.setLabel(` QLOOD-CLI - Working${'.'.repeat(dotCount)} `);}
         if (spinnerIndex % 5 === 0) { pulseState = !pulseState; statusBar.style.fg = pulseState ? theme.accent : theme.dim; }
-        screen.render();
+        scheduleRender();
       }, 120);
     }
   }
@@ -411,7 +424,7 @@ export async function runTui() {
       if (workingLogLine) { workingLogLine.destroy(); workingLogLine = null; }
       statusBar.style.fg = theme.dim;
       log.setLabel(' QLOOD-CLI ');
-      screen.render();
+      scheduleRender();
     }
     working = false;
 
@@ -485,45 +498,22 @@ export async function runTui() {
 
   // Removed project structure comparison/update logic
 
-  // Loading animation helper - operates on the main log widget
+  // Loading animation helper - simplified: avoid mutating log content during streaming
   function startLoadingAnimation(message) {
-    // Always show a small animated spinner in the log while working
-    const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    let frameIndex = 0;
-    addLog(`{cyan-fg}${frames[0]} ${message}{/}`);
+    // Just log a single line; rely on the status bar spinner for activity
+    addLog(`{cyan-fg}⠋ ${message}{/}`);
     if (loadingInterval) { clearInterval(loadingInterval); loadingInterval = null; }
-    loadingInterval = setInterval(() => {
-      const content = log.getContent();
-      const lines = content.split('\n');
-      if (lines.length > 0) {
-        lines[lines.length - 1] = `{cyan-fg}${frames[frameIndex]} ${message}{/}`;
-        log.setContent(lines.join('\n'));
-        screen.render();
-      }
-      frameIndex = (frameIndex + 1) % frames.length;
-    }, 80);
   }
 
   function stopLoadingAnimation(finalMessage, isSuccess = true) {
     if (loadingInterval) {
       clearInterval(loadingInterval);
       loadingInterval = null;
-      const content = log.getContent();
-      const lines = content.split('\n');
-      if (lines.length > 0) {
-        const color = isSuccess ? 'green-fg' : 'yellow-fg';
-        const icon = isSuccess ? '✓' : '⚠';
-        lines[lines.length - 1] = `{${color}}${icon} ${finalMessage}{/}`;
-        log.setContent(lines.join('\n'));
-        screen.render();
-      } else {
-        // Fallback if there was nothing to animate
-        addLog(isSuccess ? `{green-fg}${finalMessage}{/}` : `{yellow-fg}${finalMessage}{/}`);
-      }
-    } else {
-      // If no animation was running, still show a final message
-      addLog(isSuccess ? `{green-fg}${finalMessage}{/}` : `{yellow-fg}${finalMessage}{/}`);
     }
+    // Append a distinct final message instead of rewriting content
+    const color = isSuccess ? 'green-fg' : 'yellow-fg';
+    const icon = isSuccess ? '✓' : '⚠';
+    addLog(`{${color}}${icon} ${finalMessage}{/}`);
   }
 
   // Global Y/N handling when we expect confirmation
@@ -553,7 +543,7 @@ export async function runTui() {
       expectingInitConfirm = false;
     }
     input.focus();
-    screen.render();
+    scheduleRender();
   });
   screen.key(['n', 'N'], () => {
     if (!expectingInitConfirm) return;
@@ -566,7 +556,7 @@ export async function runTui() {
     }
     // No structure update flow
     input.focus();
-    screen.render();
+    scheduleRender();
   });
 
   function renderStatus() {
@@ -582,11 +572,11 @@ export async function runTui() {
   // Live status updates: refresh clock every second, and react to metrics updates
   let statusTick = setInterval(() => {
     renderStatus();
-    screen.render();
+    scheduleRender();
   }, 1000);
   const unsubscribeMetrics = onMetricsUpdate(() => {
     renderStatus();
-    screen.render();
+    scheduleRender();
   });
 
   function teardownAndExit(code = 0) {
@@ -616,23 +606,7 @@ export async function runTui() {
     histIndex = history.length;
 
     // Log user input for debug
-  function setStreamSpinner(active) {
-    if (active && !streamSpinnerActive) {
-      streamSpinnerActive = true;
-      const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
-      streamSpinnerTimer = setInterval(() => {
-        streamSpinnerFrame = (streamSpinnerFrame + 1) % frames.length;
-        // Re-render status bar to show spinner
-        renderStatus();
-        screen.render();
-      }, 100);
-    } else if (!active && streamSpinnerActive) {
-      streamSpinnerActive = false;
-      if (streamSpinnerTimer) { clearInterval(streamSpinnerTimer); streamSpinnerTimer = null; }
-      renderStatus();
-      screen.render();
-    }
-  }
+
 
     // Log user input for debug
 
@@ -871,7 +845,7 @@ export async function runTui() {
         addLog('');
         addLog('If Auggie is not installed, run: {bold}qlood auggie-check{/}');
         addLog('');
-        addLog('Alternative: Run {bold}auggie --compact{/} for a compact login interface');
+        // Removed suggestion for compact mode as --compact is no longer used
       } else if (cmd === '/context' || cmd.startsWith('/context ')) {
         addLog('{yellow-fg}Context management is now handled internally by Auggie. This command is deprecated.{/}');
         showToast('Context command removed', 'warn');
@@ -982,12 +956,12 @@ export async function runTui() {
     let line = value ?? input.getValue();
     if (!line.trim()) {
       input.clearValue();
-      screen.render();
+      scheduleRender();
       input.focus();
       return;
     }
     input.clearValue();
-    screen.render();
+    scheduleRender();
     await handle(line);
     input.focus();
   });
@@ -1000,15 +974,15 @@ export async function runTui() {
     const colors = [theme.accent, theme.accentAlt, theme.accent];
     const focusTimer = setInterval(() => {
       input.style.border = { fg: colors[steps % colors.length] };
-      screen.render();
+      scheduleRender();
       steps++;
       if (steps > 4) clearInterval(focusTimer);
     }, 120);
-    screen.render();
+    scheduleRender();
   });
   input.on('blur', () => {
     input.style.border = { fg: theme.dim };
-    screen.render();
+    scheduleRender();
   });
 
   // History navigation
@@ -1016,13 +990,13 @@ export async function runTui() {
     if (!history.length) return;
     histIndex = Math.max(0, histIndex - 1);
     input.setValue(history[histIndex] ?? '');
-    screen.render();
+    scheduleRender();
   });
   input.key(['down'], () => {
     if (!history.length) return;
     histIndex = Math.min(history.length, histIndex + 1);
     input.setValue(history[histIndex] ?? '');
-    screen.render();
+    scheduleRender();
   });
 
   // Ctrl+C behavior
@@ -1079,5 +1053,5 @@ export async function runTui() {
   });
 
   input.focus();
-  screen.render();
+  scheduleRender();
 }

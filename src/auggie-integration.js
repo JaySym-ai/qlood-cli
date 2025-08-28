@@ -98,7 +98,7 @@ export class AuggieIntegration {
   async executeCustomPromptStream(prompt, options = {}, handlers = {}) {
     const args = [];
     const mcpConfigRel = path.join('.qlood', 'mcp-config.json');
-    args.push('--mcp-config', mcpConfigRel, '--compact');
+    args.push('--mcp-config', mcpConfigRel);
 
     const usePrint = options.usePrintFormat !== false;
     if (usePrint) {
@@ -162,7 +162,7 @@ export class AuggieIntegration {
   async executeRawCommand(args = [], options = {}) {
     try {
       // Check if this is an interactive command that should be run directly
-      const interactiveCommands = ['--login', '--logout', '--compact'];
+      const interactiveCommands = ['--login', '--logout'];
       const isInteractive = args.some(arg => interactiveCommands.includes(arg));
 
       if (isInteractive) {
@@ -196,7 +196,7 @@ export class AuggieIntegration {
    */
   async executeRawCommandStream(args = [], options = {}, handlers = {}) {
     // Interactive commands should still inherit TTY and not be streamed into TUI
-    const interactiveCommands = ['--login', '--logout', '--compact'];
+    const interactiveCommands = ['--login', '--logout'];
     const isInteractive = args.some(arg => interactiveCommands.includes(arg));
     if (isInteractive) {
       return this._executeInteractiveCommand(args, options);
@@ -243,9 +243,9 @@ export class AuggieIntegration {
   async _executeAuggieCommand(prompt, options = {}) {
     const args = [];
 
-    // Always include MCP config and compact mode for non-interactive calls
+    // Always include MCP config for non-interactive calls
     const mcpConfigRel = path.join('.qlood', 'mcp-config.json');
-    args.push('--mcp-config', mcpConfigRel, '--compact');
+    args.push('--mcp-config', mcpConfigRel);
 
     // Default to print mode unless explicitly disabled
     const usePrint = options.usePrintFormat !== false;
