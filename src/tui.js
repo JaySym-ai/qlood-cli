@@ -1,6 +1,7 @@
 import blessed from 'blessed';
 import fs from 'fs';
 import path from 'path';
+// note: no external link opener needed
 import { setMainPrompt, setSystemInstructions } from './config.js';
 import { debugLogger } from './debug.js';
 import { ensureProjectInit, loadProjectConfig, getProjectDir, ensureProjectDirs, extractCleanMarkdown } from './project.js';
@@ -480,6 +481,10 @@ export async function runTui() {
     addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
     showToast('Login required', 'error');
     // Skip project initialization when not authenticated, but continue with TUI setup
+    // Alpha and OSS notice (plain URL; Blessed does not support OSC 8 links)
+    addLog('{yellow-fg}Note:{/} This is an alpha, open-source project.');
+    addLog('Bugs and PRs welcome: https://github.com/JaySym-ai/qlood-cli');
+    //
   } else {
     addLog('Type {bold}/help{/} for available commands.');
     addLog('Tip: Commands must start with {bold}/{/}.');
@@ -495,7 +500,13 @@ export async function runTui() {
     } catch {
       addLog('Tip: Use {bold}/wfls{/} to list workflows.');
     }
+    // Alpha and OSS notice (plain URL; Blessed does not support OSC 8 links)
+    addLog('{yellow-fg}Note:{/} This is an alpha, open-source project.');
+    addLog('Bugs and PRs welcome: https://github.com/JaySym-ai/qlood-cli');
+    //
   }
+
+  //
 
   // If project isn't initialized, prompt to initialize (only if authenticated)
   let expectingInitConfirm = false;
@@ -1059,6 +1070,8 @@ export async function runTui() {
     if (loadingSpinnerTimer) clearInterval(loadingSpinnerTimer);
     teardownAndExit(0);
   });
+
+  //
 
   input.focus();
   scheduleRender();
