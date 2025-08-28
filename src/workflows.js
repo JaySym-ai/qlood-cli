@@ -255,7 +255,7 @@ Goal: Execute the end-to-end testing workflow described in the Markdown file at 
 
 Instructions:
 - Read the workflow steps and follow them precisely with Playwright.
-- **IMPORTANT**: When locating elements, prioritize `data-testid` attributes for reliability. For example, use `page.getByTestId('your-id')`.
+- **IMPORTANT**: When locating elements, prioritize 'data-testid' attributes for reliability. For example, use 'page.getByTestId(\'your-id\')'.
 - Use headless browser.
 - If a base URL is needed, use: ${baseUrl || '(no base URL provided; infer from the workflow)'}
 - Stream concise progress logs to stdout in near real-time (flush frequently). Use the following markers on their own lines to structure output:
