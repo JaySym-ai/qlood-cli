@@ -187,6 +187,3 @@ if (process.argv.length <= 2) {
 } else {
   program.parseAsync();
 }
- else {
-  program.parseAsync();
-}
