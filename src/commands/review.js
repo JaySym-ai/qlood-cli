@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs/promises';
-import { ensureAuggieUpToDate, executeCustomPromptStream, checkAuthentication } from '../auggie-integration.js';
+import { ensureAuggieUpToDate, checkAuthentication } from '../auggie-integration.js';
+import { runAuggieStream } from '../auggie-stream.js';
 import { getProjectDir, ensureProjectDirs, extractCleanMarkdown } from '../project.js';
 import { buildReviewPrompt } from '../prompts/prompt.review.js';
 // Export categories so TUI can reuse without duplication
@@ -128,14 +129,13 @@ export function registerReviewCommand(program, { startCliSpinner }) {
           await fs.mkdir(catDir, { recursive: true });
           console.log(`\nStarting: ${cat.title}...`);
           const prompt = buildReviewPrompt(cat.title, cat.checklist);
-          let live = '';
-          const res = await executeCustomPromptStream(prompt, { cwd, usePrintFormat: true, pty: true }, {
-            onStdout: (chunk) => { live += chunk; process.stdout.write(chunk); },
+          const { success, stdout, stderr } = await runAuggieStream(prompt, { cwd }, {
+            onStdout: (chunk) => { process.stdout.write(chunk); },
             onStderr: (chunk) => { process.stderr.write(chunk); }
           });
-          let content = res.success ? extractCleanMarkdown(res.stdout || live) : `# ${cat.title} Review\n\n❌ Failed to run analysis.\n\nError:\n\n${(res.stderr || 'Unknown error')}`;
+          let content = success ? extractCleanMarkdown(stdout) : `# ${cat.title} Review\n\n❌ Failed to run analysis.\n\nError:\n\n${(stderr || 'Unknown error')}`;
           if (!content || content.trim().length < 20) {
-            content = res.stdout || live || content || '';
+            content = stdout || content || '';
           }
           const outPath = path.join(catDir, 'review.md');
           await fs.writeFile(outPath, content, 'utf-8');

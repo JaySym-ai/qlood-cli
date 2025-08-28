@@ -267,13 +267,13 @@ Instructions:
 - If you encounter issues, still write a report and clearly mark failures; you may also write additional notes to "${relResultsDir}/warning/report.md".
 - Do not ask for confirmation. Execute autonomously.`;
 
-  // Stream execution so TUI can show live logs
+  // Stream execution so TUI can show live logs (unified helper)
   if (streamHandlers) {
-    const res = await executeCustomPromptStream(guidance, { usePrintFormat: false, pty: true, cwd }, streamHandlers);
-    return { success: !!res.success, resultsDir: results.dir };
+    const { success } = await runAuggieStream(guidance, { cwd }, streamHandlers);
+    return { success, resultsDir: results.dir };
   } else {
-    const res = await executeCustomPrompt(guidance, { usePrintFormat: true, cwd });
-    return { success: !!res.success, resultsDir: results.dir };
+    const { success } = await runAuggieStream(guidance, { cwd });
+    return { success, resultsDir: results.dir };
   }
 }
 
