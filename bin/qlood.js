@@ -108,6 +108,7 @@ program
 
 // Register externalized commands
 registerReviewCommand(program, { startCliSpinner });
+registerCleanCommand(program);
 
 // Project commands
 // Removed legacy local test runner; use `qlood agent` or review workflows instead.
@@ -184,5 +185,8 @@ if (process.argv.length <= 2) {
   // No args -> launch TUI by default
   await runTui();
 } else {
+  program.parseAsync();
+}
+ else {
   program.parseAsync();
 }
