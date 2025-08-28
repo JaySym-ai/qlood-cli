@@ -207,7 +207,43 @@ export async function runTui() {
   }
 
   // Bounded live stream into the log: keep only the last N lines of stream
-  
+  // Keep log content bounded to avoid excessive memory/scrollback
+  const MAX_TOTAL_LOG_LINES = 1500;
+  function boundedStreamAppendTop(text) {
+    try {
+      const str = String(text || '');
+      if (!str) return;
+      const parts = str.split('\n');
+      for (const line of parts) {
+        if (line === '') continue;
+        log.add(line);
+      }
+      // Trim total content if it grows too large
+      const get = typeof log.getContent === 'function' ? log.getContent.bind(log) : () => (log.content || '');
+      const set = typeof log.setContent === 'function' ? log.setContent.bind(log) : (v) => { log.content = v; };
+      const content = get();
+      const lines = content.split('\n');
+      if (lines.length > MAX_TOTAL_LOG_LINES) {
+        const trimmed = lines.slice(lines.length - MAX_TOTAL_LOG_LINES).join('\n');
+        set(trimmed);
+      }
+      // Stick to bottom reliably, even if other timers render concurrently
+      try {
+        if (typeof log.getScrollHeight === 'function' && typeof log.setScroll === 'function') {
+          log.setScroll(log.getScrollHeight());
+        } else {
+          log.setScrollPerc(100);
+        }
+      } catch {
+        try { log.setScrollPerc(100); } catch {}
+      }
+    } catch (e) {
+      // Fallback: write raw in case of any unexpected blessed API differences
+      try { log.add(String(text || '')); } catch {}
+    }
+  }
+
+
 
   // Throttled stream logging buffer
   let streamBuffer = '';
@@ -232,13 +268,13 @@ export async function runTui() {
       streamSpinnerTimer = setInterval(() => {
         streamSpinnerFrame = (streamSpinnerFrame + 1) % frames.length;
         renderStatus();
-        screen.render();
+        scheduleRender();
       }, 100);
     } else if (!active && streamSpinnerActive) {
       streamSpinnerActive = false;
       if (streamSpinnerTimer) { clearInterval(streamSpinnerTimer); streamSpinnerTimer = null; }
       renderStatus();
-      screen.render();
+      scheduleRender();
     }
   }
 
@@ -287,8 +323,17 @@ export async function runTui() {
 
   function addLog(message) {
     log.add(message);
-    log.setScrollPerc(100);
-    screen.render();
+    // Keep view pinned to latest output
+    try {
+      if (typeof log.getScrollHeight === 'function' && typeof log.setScroll === 'function') {
+        log.setScroll(log.getScrollHeight());
+      } else {
+        log.setScrollPerc(100);
+      }
+    } catch {
+      try { log.setScrollPerc(100); } catch {}
+    }
+    scheduleRender();
 
     // Log system output for debug (strip color codes for cleaner log)
     const cleanMessage = message.replace(/\{[^}]*\}/g, '');
@@ -560,7 +605,7 @@ export async function runTui() {
   const history = [];
   let histIndex = -1;
 
-  
+
 
   async function handle(line) {
     // Any user action resets idle Ctrl+C arming

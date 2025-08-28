@@ -108,7 +108,6 @@ What QLOOD tests (automatically):
 - You’ll be prompted to initialize on first run. Accepting allows Auggie to index your project for context‑aware testing.
 
 ### Security
-- Prefer setting secrets via the TUI (e.g. `/key <apiKey>`) to avoid shell history capturing secrets.
 - Credentials should be provided via environment variables or a gitignored `.env` file.
 
 ### Open Source
