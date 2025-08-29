@@ -4,7 +4,6 @@ import { EventEmitter } from 'events';
 const emitter = new EventEmitter();
 
 const counters = {
-  llmCalls: 0,
   auggieCalls: 0,
 };
 

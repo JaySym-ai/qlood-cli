@@ -195,23 +195,6 @@ export class AuggieIntegration {
     }
   }
 
-  /**
-   * Streaming variant of executeRawCommand
-   * @param {string[]} args
-   * @param {Object} options
-   * @param {Object} handlers
-   */
-  async executeRawCommandStream(args = [], options = {}, handlers = {}) {
-    // Interactive commands should still inherit TTY and not be streamed into TUI
-    const interactiveCommands = ['--login', '--logout'];
-    const isInteractive = args.some(arg => interactiveCommands.includes(arg));
-    if (isInteractive) {
-      return this._executeInteractiveCommand(args, options);
-    }
-    // Ensure compact mode for non-interactive calls
-    const finalArgs = args.includes('--compact') ? args : ['--compact', ...args];
-    return this._spawnAndStream(this.auggieCommand, finalArgs, options, handlers);
-  }
 
   /**
    * Executes an interactive Auggie command using spawn

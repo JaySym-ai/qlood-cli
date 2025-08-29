@@ -161,10 +161,10 @@ export function createRenderer(screen, ui) {
   function renderStatus() {
     const now = new Date();
     const clock = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const { llmCalls, auggieCalls } = getMetrics();
+    const { auggieCalls } = getMetrics();
     const s = getState();
     const spin = s.streamSpinnerActive ? `{${theme.accent}-fg}${spinnerFrames[s.streamSpinnerFrame]} Running{/}` : `{${theme.dim}-fg}Idle{/}`;
-    statusBar.setContent(`{${theme.dim}-fg}Stats:{/} LLM ${llmCalls}  •  Auggie ${auggieCalls}  {${theme.dim}-fg}| ${clock}{/}  ${spin}`);
+    statusBar.setContent(`{${theme.dim}-fg}Stats:{/} Auggie ${auggieCalls}  {${theme.dim}-fg}| ${clock}{/}  ${spin}`);
   }
 
   function startStream() {

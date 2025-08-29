@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { ensureProjectDirs, getProjectDir, loadProjectConfig, extractCleanMarkdown } from './project.js';
-import { executeCustomPrompt, executeCustomPromptStream, checkAuthentication } from './auggie-integration.js';
+import { checkAuthentication } from './auggie-integration.js';
 import { runAuggieStream } from './auggie-stream.js';
 import { debugLogger } from './debug.js';
 
