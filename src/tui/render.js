@@ -120,36 +120,12 @@ export function createRenderer(screen, ui) {
     const text = String(chunk || '')
       .replace(/\r/g, '')
       .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
-    const lines = text.split('\n');
-    const out = [];
-    let acc = '';
-    for (const raw of lines) {
-      const l = raw;
-      const t = l.trim();
-      const isBoundary = (
-        t === '' ||
-        /^([📋🔧✅⚠️❌])\b/.test(t) ||
-        /^(Step|Action|Result)\s*:/.test(t) ||
-        /^-{2,}$/.test(t)
-      );
-      if (isBoundary) {
-        if (acc) { out.push(acc); acc = ''; }
-        out.push(l);
-        continue;
-      }
-      if (t.length <= 3) {
-        acc += (acc ? ' ' : '') + t;
-      } else {
-        if (acc) { out.push(acc); acc = ''; }
-        out.push(l);
-      }
-    }
-    if (acc) out.push(acc);
-    let joined = out.join('\n');
-    joined = joined
+    // Keep original line boundaries; only drop obvious control markers/noise
+    const joined = text
       .split('\n')
       .filter((l) => {
         const t = l.trim();
+        if (!t) return true; // preserve blank lines to avoid cramming
         if (t === '^D' || t === '^C') return false;
         if (/^script:.*(done|exiting)/i.test(t)) return false;
         return true;

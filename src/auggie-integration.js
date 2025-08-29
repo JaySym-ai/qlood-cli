@@ -102,13 +102,9 @@ export class AuggieIntegration {
 
     const usePrint = options.usePrintFormat !== false;
     if (usePrint) {
-      // Prefer compact output for all Auggie runs
-      args.push('--compact');
       args.push('--print', prompt);
     } else {
       if (options.flags) args.push(...options.flags);
-      // Prefer compact output for all Auggie runs
-      if (!args.includes('--compact')) args.push('--compact');
       args.push(prompt);
     }
 
@@ -123,7 +119,7 @@ export class AuggieIntegration {
   async checkAuthentication() {
     try {
       // Try to run a simple command that requires authentication
-      const result = await this._executeCommand('auggie', ['--compact', '--print-augment-token'], {
+      const result = await this._executeCommand('auggie', ['--print-augment-token'], {
         skipMetrics: true
       });
 
@@ -174,10 +170,8 @@ export class AuggieIntegration {
         return await this._executeInteractiveCommand(args, options);
       }
 
-      // Ensure compact mode for non-interactive calls
-      const finalArgs = args.includes('--compact') ? args : ['--compact', ...args];
-
-      const result = await this._executeCommand(this.auggieCommand, finalArgs, {
+      // Do not force compact mode; respect caller-provided args
+      const result = await this._executeCommand(this.auggieCommand, args, {
         timeout: (options.timeout ?? this.timeout),
         cwd: options.cwd || process.cwd()
       });
@@ -242,15 +236,12 @@ export class AuggieIntegration {
     // Default to print mode unless explicitly disabled
     const usePrint = options.usePrintFormat !== false;
     if (usePrint) {
-      // Prefer compact output for all Auggie runs
-      args.push('--compact');
       args.push('--print', prompt);
     } else {
       // Add any additional flags
       if (options.flags) {
         args.push(...options.flags);
       }
-      if (!args.includes('--compact')) args.push('--compact');
       // Add the prompt as the last argument
       args.push(prompt);
     }
