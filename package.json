@@ -1,6 +1,6 @@
 {
   "name": "qlood-cli",
-  "version": "0.1.41",
+  "version": "0.1.42",
   "description": "Open-source CLI that initializes ./.qlood in your project and uses AI-driven browser automation to test your web app.",
   "bin": {
     "qlood": "bin/qlood.js"
