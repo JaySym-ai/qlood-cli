@@ -73,86 +73,115 @@ export function getReviewCategories() {
   ];
 }
 
+function getCategoryByKey(key) {
+  return getReviewCategories().find(c => c.key === key);
+}
+
+async function runReviews(categoryKeys, { startCliSpinner, overrideTs } = {}) {
+  const cwd = process.cwd();
+  ensureProjectDirs(cwd);
+
+  const preSpinner = startCliSpinner?.('Ensuring Auggie is installed and up-to-date...');
+  try {
+    const status = await ensureAuggieUpToDate();
+    if (!status.success) {
+      preSpinner?.stop(`Auggie check/update failed: ${status.message}`, false);
+      process.exit(1);
+    }
+    preSpinner?.stop(status.message, true);
+  } catch (e) {
+    preSpinner?.stop(`Error while ensuring Auggie: ${e.message}`, false);
+    process.exit(1);
+  }
+
+  const authSpinner = startCliSpinner?.('Verifying Auggie authentication...');
+  try {
+    const auth = await checkAuthentication();
+    if (!auth.success) {
+      authSpinner?.stop(`Failed to verify Auggie authentication: ${auth.error || 'Unknown error'}`, false);
+      process.exit(1);
+    }
+    if (!auth.authenticated) {
+      authSpinner?.stop('You are not authenticated with Auggie. Run: auggie --login', false);
+      console.log('Tip: You can authenticate by running "auggie --login" once, then re-run this command.');
+      process.exit(1);
+    }
+    authSpinner?.stop('Auggie authentication verified', true);
+  } catch (e) {
+    authSpinner?.stop(`Error verifying Auggie authentication: ${e.message}`, false);
+    process.exit(1);
+  }
+
+  const ts = overrideTs || new Date().toISOString().replace(/[:.]/g, '-');
+  const baseDir = path.join(getProjectDir(cwd), 'results', `review-${ts}`);
+  await fs.mkdir(baseDir, { recursive: true });
+
+  const categories = categoryKeys.map(k => getCategoryByKey(k)).filter(Boolean);
+  if (categories.length === 0) {
+    console.error('No valid review categories to run.');
+    process.exit(1);
+  }
+
+  console.log('Running Auggie reviews...');
+  try {
+    const results = [];
+    for (const cat of categories) {
+      const catDir = path.join(baseDir, cat.key);
+      await fs.mkdir(catDir, { recursive: true });
+      console.log(`\nStarting: ${cat.title}...`);
+      const prompt = buildReviewPrompt(cat.title, cat.checklist);
+      const { success, stdout, stderr } = await runAuggieStream(prompt, { cwd }, {
+        onStdout: (chunk) => { process.stdout.write(chunk); },
+        onStderr: (chunk) => { process.stderr.write(chunk); }
+      });
+      let content = success ? extractCleanMarkdown(stdout) : `# ${cat.title} Review\n\n❌ Failed to run analysis.\n\nError:\n\n${(stderr || 'Unknown error')}`;
+      if (!content || content.trim().length < 20) {
+        content = stdout || content || '';
+      }
+      const outPath = path.join(catDir, 'review.md');
+      await fs.writeFile(outPath, content, 'utf-8');
+      console.log(`\n✓ Completed: ${cat.title}`);
+      console.log(`Saved: ${path.relative(cwd, outPath)}`);
+      results.push({ title: cat.title, outPath, success });
+    }
+    console.log('\nSaved reviews:');
+    for (const r of results) {
+      console.log(`- ${r.title}: ${path.relative(cwd, r.outPath)}`);
+    }
+    console.log('All reviews complete.');
+    const allOk = results.every(r => r.success);
+    process.exit(allOk ? 0 : 1);
+  } catch (error) {
+    console.error(`Error during reviews: ${error.message}`);
+    process.exit(1);
+  }
+}
+
+
 
 export function registerReviewCommand(program, { startCliSpinner }) {
   program
     .command('review')
     .description('Run three Auggie reviews and save to ./.qlood/results/review-<datetime>/<category>/review.md')
-    .option('-t, --timeout <ms>', 'Timeout per Auggie call in ms', (v) => parseInt(v, 10))
-    .action(async (cmdOpts) => {
-      const cwd = process.cwd();
-      ensureProjectDirs(cwd);
-
-      const preSpinner = startCliSpinner('Ensuring Auggie is installed and up-to-date...');
-      try {
-        const status = await ensureAuggieUpToDate();
-        if (!status.success) {
-          preSpinner.stop(`Auggie check/update failed: ${status.message}`, false);
-          process.exit(1);
-        }
-        preSpinner.stop(status.message, true);
-      } catch (e) {
-        preSpinner.stop(`Error while ensuring Auggie: ${e.message}`, false);
-        process.exit(1);
+    .action(async () => {
+      const keys = getReviewCategories().map(c => c.key);
+      await runReviews(keys, { startCliSpinner });
+    });
 }
 
+export function registerSingleReviewCommands(program, { startCliSpinner }) {
+  program
+    .command('reviewrepo')
+    .description('Run only the Repository & Supply Chain review')
+    .action(async () => { await runReviews(['repository-supply-chain'], { startCliSpinner }); });
 
-      const authSpinner = startCliSpinner('Verifying Auggie authentication...');
-      try {
-        const auth = await checkAuthentication();
-        if (!auth.success) {
-          authSpinner.stop(`Failed to verify Auggie authentication: ${auth.error || 'Unknown error'}`, false);
-          process.exit(1);
-        }
-        if (!auth.authenticated) {
-          authSpinner.stop('You are not authenticated with Auggie. Run: auggie --login', false);
-          console.log('Tip: You can authenticate by running "auggie --login" once, then re-run this command.');
-          process.exit(1);
-        }
-        authSpinner.stop('Auggie authentication verified', true);
-      } catch (e) {
-        authSpinner.stop(`Error verifying Auggie authentication: ${e.message}`, false);
-        process.exit(1);
-      }
+  program
+    .command('reviewapp')
+    .description('Run only the Application Code & Configuration review')
+    .action(async () => { await runReviews(['application-code-config'], { startCliSpinner }); });
 
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      const baseDir = path.join(getProjectDir(cwd), 'results', `review-${ts}`);
-      await fs.mkdir(baseDir, { recursive: true });
-
-      const categories = getReviewCategories();
-
-      console.log('Running Auggie reviews...');
-      try {
-        const results = [];
-        for (const cat of categories) {
-          const catDir = path.join(baseDir, cat.key);
-          await fs.mkdir(catDir, { recursive: true });
-          console.log(`\nStarting: ${cat.title}...`);
-          const prompt = buildReviewPrompt(cat.title, cat.checklist);
-          const { success, stdout, stderr } = await runAuggieStream(prompt, { cwd }, {
-            onStdout: (chunk) => { process.stdout.write(chunk); },
-            onStderr: (chunk) => { process.stderr.write(chunk); }
-          });
-          let content = success ? extractCleanMarkdown(stdout) : `# ${cat.title} Review\n\n❌ Failed to run analysis.\n\nError:\n\n${(stderr || 'Unknown error')}`;
-          if (!content || content.trim().length < 20) {
-            content = stdout || content || '';
-          }
-          const outPath = path.join(catDir, 'review.md');
-          await fs.writeFile(outPath, content, 'utf-8');
-          console.log(`\n\u2713 Completed: ${cat.title}`);
-          console.log(`Saved: ${path.relative(cwd, outPath)}`);
-          results.push({ title: cat.title, outPath, success: res.success });
-        }
-        console.log('\nSaved reviews:');
-        for (const r of results) {
-          console.log(`- ${r.title}: ${path.relative(cwd, r.outPath)}`);
-        }
-        console.log('All reviews complete.');
-        const allOk = results.every(r => r.success);
-        process.exit(allOk ? 0 : 1);
-      } catch (error) {
-        console.error(`Error during reviews: ${error.message}`);
-        process.exit(1);
-      }
-    });
+  program
+    .command('reviewbuild')
+    .description('Run only the Build / CI/CD / Infrastructure-as-Code review')
+    .action(async () => { await runReviews(['build-ci-iac'], { startCliSpinner }); });
 }

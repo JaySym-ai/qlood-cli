@@ -18,7 +18,7 @@ import { debugLogger } from '../src/debug.js';
 import { ensureAuggieUpToDate, executeRawCommand } from '../src/auggie-integration.js';
 import { getProjectDir, ensureProjectInit } from '../src/project.js';
 import fs from 'fs/promises';
-import { registerReviewCommand } from '../src/commands/review.js';
+import { registerReviewCommand, registerSingleReviewCommands } from '../src/commands/review.js';
 import { registerCleanCommand } from '../src/commands/clean.js';
 
 import { startCliSpinner } from '../src/cli/spinner.js';
@@ -57,6 +57,12 @@ program
   .name('qlood')
   .description('AI-powered testing CLI for your web app. Initializes ./.qlood and drives Chromium to find bugs.')
   .version(currentVersion);
+
+
+// Add extra help text pointing to docs (shown for program and all subcommands)
+const docsHelpText = `For a categorized, easy-to-browse guide to all commands, see:\n  https://qlood.com/docs\nDon't be afraid to click the link!`;
+program.addHelpText('beforeAll', `\n${docsHelpText}\n`);
+program.addHelpText('afterAll', `\n${docsHelpText}\n`);
 
 // No local Playwright controls; all browser work is delegated to Auggie (MCP)
 
@@ -109,6 +115,7 @@ program
 
 // Register externalized commands
 registerReviewCommand(program, { startCliSpinner });
+registerSingleReviewCommands(program, { startCliSpinner });
 registerCleanCommand(program);
 
 // Project commands

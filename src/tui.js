@@ -843,24 +843,9 @@ export async function runTui() {
           showToast('Clean failed', 'error');
         }
       } else if (cmd === '/help') {
-        addLog('{bold}Commands:{/}');
-        addLog('  {cyan-fg}/wfadd <description>{/} - Create a new test workflow');
-        addLog('  {cyan-fg}/wfls{/} - List all available workflows');
-        addLog('  {cyan-fg}/wfupdate <id>{/} - Update workflow to match code changes');
-        addLog('  {cyan-fg}/wfdel <id>{/} - Delete a workflow');
-        addLog('  {cyan-fg}/review{/} - Run three security/code reviews and save results');
-        addLog('  {cyan-fg}/refactor{/} - Analyze repo and save a refactor plan under ./.qlood/results');
-        addLog('  {cyan-fg}/clean{/} - Delete all files under ./.qlood/debug and ./.qlood/results');
-        addLog('  {cyan-fg}/quit{/} - Exit QLOOD-CLI');
-        addLog('');
-        addLog('All input must start with {bold}/{/}.');
-
-
-        // Credentials management help
-        addLog('');
-        addLog('{bold}Testing credentials (safe handling){/}');
-        addLog('  - Provide credentials via env vars or a gitignored .env file:');
-        addLog('    {cyan-fg}QLOOD_TEST_USERNAME{/}, {cyan-fg}QLOOD_TEST_PASSWORD{/}');
+        addLog('{yellow-fg}We now have many commands; they are organized in our docs:{/}');
+        addLog('  https://qlood.com/docs');
+        addLog("Don't be afraid to click the link!");
         addLog('  - Avoid passing secrets on the command line; typed text is masked in logs.');
 
       } else if (cmd === '/auggie-login' || cmd === '/login') {
