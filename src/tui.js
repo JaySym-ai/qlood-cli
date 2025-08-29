@@ -907,6 +907,49 @@ export async function runTui() {
           addLog(`{red-fg}review error:{/} ${e?.message || e}`);
           showToast('Review failed', 'error');
         }
+      } else if (cmd === '/reviewrepo' || cmd === '/reviewapp' || cmd === '/reviewbuild') {
+        const authResult = await checkAuthentication();
+        if (!authResult.success || !authResult.authenticated) {
+          addLog('{red-fg}❌ Authentication required to run reviews.{/}');
+          addLog('Run {bold}auggie --login{/} to authenticate with Augment.');
+          showToast('Login required', 'error');
+          return;
+        }
+        const key = cmd === '/reviewrepo'
+          ? 'repository-supply-chain'
+          : (cmd === '/reviewapp' ? 'application-code-config' : 'build-ci-iac');
+        const cat = getReviewCategories().find(c => c.key === key);
+        if (!cat) { addLog('{red-fg}Unknown review category.{/}'); return; }
+        addLog(`{cyan-fg}Starting: ${cat.title}...{/}`);
+        startStream();
+        const cwd = process.cwd();
+        try {
+          ensureProjectDirs(cwd);
+          const ts = new Date().toISOString().replace(/[:.]/g, '-');
+          const baseDir = path.join(getProjectDir(cwd), 'results', `review-${ts}`);
+          fs.mkdirSync(baseDir, { recursive: true });
+          const catDir = path.join(baseDir, cat.key);
+          fs.mkdirSync(catDir, { recursive: true });
+          const prompt = buildReviewPrompt(cat.title, cat.checklist);
+          const handlers = makeAuggieStreamHandlers();
+          const { success, stdout } = await runAuggieStream(prompt, { cwd }, handlers);
+          let content = success ? extractCleanMarkdown(stdout) : `# ${cat.title} Review\n\n❌ Failed to run analysis.\n\nUnknown error`;
+          if (!content || content.trim().length < 20) {
+            content = (stdout || content || '');
+          }
+          const outPath = path.join(catDir, 'review.md');
+          fs.writeFileSync(outPath, content, 'utf-8');
+          const rel = path.relative(cwd, outPath);
+          stopStream();
+          addLog(`{green-fg}✓ Completed:{/} ${cat.title}`);
+          addLog(`Saved: ${rel}`);
+          showToast(`${cat.title} review complete`, 'success');
+        } catch (e) {
+          stopStream();
+          addLog(`{red-fg}review error:{/} ${e?.message || e}`);
+          showToast('Review failed', 'error');
+        }
+
       } else if (cmd === '/refactor') {
         const authResult = await checkAuthentication();
         if (!authResult.success || !authResult.authenticated) {
