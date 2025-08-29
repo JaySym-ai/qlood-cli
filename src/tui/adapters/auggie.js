@@ -7,6 +7,7 @@ import { runAuggieStream } from '../../auggie-stream.js';
 import { checkAuthentication, executeCustomPromptStream, cancelActiveAuggie, hasActiveAuggie } from '../../auggie-integration.js';
 import { addWorkflow, updateWorkflow, deleteWorkflow, listWorkflows, runWorkflow } from '../../workflows.js';
 import { buildRefactorPrompt } from '../../prompts/prompt.refactor.js';
+import { buildDuplicateFinderPrompt } from '../../prompts/prompt.duplicate.js';
 import { buildReviewPrompt } from '../../prompts/prompt.review.js';
 import { getReviewCategories } from '../../commands/review.js';
 
@@ -30,6 +31,6 @@ export {
   runWorkflow,
   buildRefactorPrompt,
   buildReviewPrompt,
+  buildDuplicateFinderPrompt,
   getReviewCategories,
 };
-

@@ -22,6 +22,7 @@ import {
   buildRefactorPrompt,
   buildReviewPrompt,
   getReviewCategories,
+  buildDuplicateFinderPrompt,
 } from './adapters/auggie.js';
 
 export function registerEvents({ ui, renderer }) {
@@ -451,6 +452,38 @@ export function registerEvents({ ui, renderer }) {
       }
       return;
     }
+    if (cmd === '/duplicatefinder') {
+      const authResult = await checkAuthentication();
+      if (!authResult.success || !authResult.authenticated) return showAuthError('run duplicate finder');
+      addLog('{cyan-fg}Starting: Duplicate & dead code analysis...{/}');
+      startStream();
+      const cwd = process.cwd();
+      try {
+        ensureProjectDirs(cwd);
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        const baseDir = path.join(getProjectDir(cwd), 'results', `duplicate_review_${ts}`);
+        fs.mkdirSync(baseDir, { recursive: true });
+        const prompt = buildDuplicateFinderPrompt();
+        const handlers = {
+          onStdout: (chunk) => { const t = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, ''); if (t.trim()) streamLog(t + '\n'); scheduleRender(); },
+          onStderr: (chunk) => { const t = normalizeChunk(chunk).replace(/\x1b\[[0-9;]*m/g, ''); if (t.trim()) streamLog(`{yellow-fg}${t}{/}\n`); scheduleRender(); },
+        };
+        const { success, stdout, cleaned } = await runAuggieStream(prompt, { cwd }, handlers);
+        let content = success ? (cleaned || '') : '';
+        if (!content || content.trim().length < 50) content = (stdout || '# Duplicate & Dead Code Report\n\nNo results.');
+        const outPath = path.join(baseDir, 'duplicate_review.md');
+        fs.writeFileSync(outPath, content, 'utf-8');
+        stopStream();
+        addLog(`{green-fg}✓ Completed:{/} Duplicate & dead code analysis`);
+        addLog(`Saved: ${path.relative(cwd, outPath)}`);
+        showToast('Duplicate review saved', 'success');
+      } catch (e) {
+        stopStream();
+        addLog(`{red-fg}duplicatefinder error:{/} ${e?.message || e}`);
+        showToast('Duplicate finder failed', 'error');
+      }
+      return;
+    }
     if (cmd === '/quit') {
       throw new Error('__EXIT__');
     }
@@ -462,4 +495,3 @@ export function registerEvents({ ui, renderer }) {
 
   return { bootstrap, handleCommand };
 }
-
