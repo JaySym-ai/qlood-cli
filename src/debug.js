@@ -138,47 +138,17 @@ export class DebugLogger {
     };
 
     try {
+      // Ensure the session directory exists (it may have been cleaned by /clean)
+      const dir = path.dirname(this.debugFile);
+      try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); } catch {}
       fs.appendFileSync(this.debugFile, JSON.stringify(entry) + '\n');
     } catch (error) {
       console.error('Failed to write debug log:', error.message);
     }
   }
 
-  logAgentRequest(goal, model, prompt, tools) {
-    this.writeDebug('AGENT_REQUEST', {
-      goal,
-      model,
-      promptLength: prompt.length,
-      promptPreview: this.truncate(prompt, 500),
-      toolsAvailable: tools.map(t => t.name)
-    });
-  }
 
-  logAgentResponse(response, parsedPlan) {
-    this.writeDebug('AGENT_RESPONSE', {
-      rawResponseLength: response.length,
-      responsePreview: this.truncate(response, 500),
-      parseSuccess: !!parsedPlan,
-      planSteps: parsedPlan ? parsedPlan.length : 0
-    });
-  }
 
-  logLLMCall(model, messages, response, error = null) {
-    this.writeDebug('LLM_CALL', {
-      model,
-      messageCount: messages ? messages.length : 0,
-      messagesPreview: messages ? messages.map(m => ({
-        role: m.role,
-        contentLength: m.content ? m.content.length : 0,
-        contentPreview: this.truncate(m.content, 200)
-      })) : null,
-      responseLength: response ? response.length : 0,
-      responsePreview: response ? this.truncate(response, 300) : null,
-      success: !error,
-      error: error ? error.message : null,
-      timestamp: new Date().toISOString()
-    });
-  }
 
   logAuggieRequest(command, args, options = {}) {
     this.writeDebug('AUGGIE_REQUEST', {
@@ -218,56 +188,7 @@ export class DebugLogger {
     return str;
   }
 
-  logToolExecution(toolName, args, startTime) {
-    // Shallow-truncate long string args to keep logs compact
-    const safeArgs = {};
-    try {
-      for (const [k, v] of Object.entries(args || {})) {
-        if (typeof v === 'string') {
-          safeArgs[k] = this.truncate(v, 200);
-        } else {
-          safeArgs[k] = v;
-        }
-      }
-    } catch (_) {}
 
-    this.writeDebug('TOOL_EXECUTION_START', {
-      tool: toolName,
-      args: safeArgs,
-      startTime: startTime.toISOString()
-    });
-  }
-
-  logToolResult(toolName, result, startTime, error = null) {
-    const endTime = new Date();
-    const duration = endTime - startTime;
-
-    // Summarize potentially large result payloads
-    let summarized = null;
-    if (result && typeof result === 'object') {
-      const output = typeof result.output === 'string' ? result.output : '';
-      const errText = typeof result.error === 'string' ? result.error : '';
-      summarized = {
-        success: result.success,
-        exitCode: result.exitCode,
-        processId: result.processId,
-        outputLength: output ? output.length : undefined,
-        errorLength: errText ? errText.length : undefined,
-        outputPreview: output ? this.truncate(output, 200) : undefined,
-        errorPreview: errText ? this.truncate(errText, 200) : undefined,
-      };
-      Object.keys(summarized).forEach(k => summarized[k] === undefined && delete summarized[k]);
-    }
-
-    this.writeDebug('TOOL_EXECUTION_END', {
-      tool: toolName,
-      durationMs: duration,
-      success: !error && (result?.success !== false),
-      result: error ? null : summarized,
-      error: error ? error.message : null,
-      endTime: endTime.toISOString()
-    });
-  }
 
   // Removed logPageState: depended on local Playwright page instance
 
@@ -283,13 +204,6 @@ export class DebugLogger {
     });
   }
 
-  logUserInput(input, source = 'unknown') {
-    this.writeDebug('USER_INPUT', {
-      input,
-      source,
-      timestamp: new Date().toISOString()
-    });
-  }
 
   logSystemOutput(output, type = 'info') {
     const text = typeof output === 'string' ? output : String(output ?? '');
